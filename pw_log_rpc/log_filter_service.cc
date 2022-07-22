@@ -19,33 +19,34 @@
 #include "pw_protobuf/decoder.h"
 
 namespace pw::log_rpc {
-StatusWithSize FilterService::SetFilter(ConstByteSpan request, ByteSpan) {
+
+Status FilterService::SetFilterImpl(ConstByteSpan request) {
   protobuf::Decoder decoder(request);
-  PW_TRY_WITH_SIZE(decoder.Next());
+  PW_TRY(decoder.Next());
   if (static_cast<log::SetFilterRequest::Fields>(decoder.FieldNumber()) !=
       log::SetFilterRequest::Fields::FILTER_ID) {
-    return StatusWithSize::InvalidArgument();
+    return Status::InvalidArgument();
   }
   ConstByteSpan filter_id;
-  PW_TRY_WITH_SIZE(decoder.ReadBytes(&filter_id));
+  PW_TRY(decoder.ReadBytes(&filter_id));
   Result<Filter*> filter = filter_map_.GetFilterFromId(filter_id);
   if (!filter.ok()) {
-    return StatusWithSize::NotFound();
+    return Status::NotFound();
   }
 
-  PW_TRY_WITH_SIZE(decoder.Next());
+  PW_TRY(decoder.Next());
   ConstByteSpan filter_buffer;
   if (static_cast<log::SetFilterRequest::Fields>(decoder.FieldNumber()) !=
       log::SetFilterRequest::Fields::FILTER) {
-    return StatusWithSize::InvalidArgument();
+    return Status::InvalidArgument();
   }
-  PW_TRY_WITH_SIZE(decoder.ReadBytes(&filter_buffer));
-  PW_TRY_WITH_SIZE(filter.value()->UpdateRulesFromProto(filter_buffer));
-  return StatusWithSize();
+  PW_TRY(decoder.ReadBytes(&filter_buffer));
+
+  return filter.value()->UpdateRulesFromProto(filter_buffer);
 }
 
-StatusWithSize FilterService::GetFilter(ConstByteSpan request,
-                                        ByteSpan response) {
+StatusWithSize FilterService::GetFilterImpl(ConstByteSpan request,
+                                            ByteSpan response) {
   protobuf::Decoder decoder(request);
   PW_TRY_WITH_SIZE(decoder.Next());
   if (static_cast<log::GetFilterRequest::Fields>(decoder.FieldNumber()) !=
@@ -68,6 +69,7 @@ StatusWithSize FilterService::GetFilter(ConstByteSpan request,
     rule_encoder.WriteAnyFlagsSet(rule.any_flags_set).IgnoreError();
     rule_encoder.WriteAction(static_cast<log::FilterRule::Action>(rule.action))
         .IgnoreError();
+    rule_encoder.WriteThreadEquals(rule.thread_equals).IgnoreError();
     PW_TRY_WITH_SIZE(rule_encoder.status());
   }
   PW_TRY_WITH_SIZE(encoder.status());
@@ -75,7 +77,7 @@ StatusWithSize FilterService::GetFilter(ConstByteSpan request,
   return StatusWithSize(encoder.size());
 }
 
-StatusWithSize FilterService::ListFilterIds(ConstByteSpan, ByteSpan response) {
+StatusWithSize FilterService::ListFilterIdsImpl(ByteSpan response) {
   log::FilterIdListResponse::MemoryEncoder encoder(response);
   for (auto& filter : filter_map_.filters()) {
     PW_TRY_WITH_SIZE(encoder.WriteFilterId(filter.id()));

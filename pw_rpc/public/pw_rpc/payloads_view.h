@@ -124,6 +124,9 @@ class PayloadsView {
   template <typename>
   friend class NanopbPayloadsView;
 
+  template <typename>
+  friend class PwpbPayloadsView;
+
   template <auto kMethod>
   using MethodInfo = internal::MethodInfo<kMethod>;
 
@@ -178,7 +181,13 @@ class PayloadsView {
       case MethodType::kBidirectionalStreaming:
         return {PacketType::CLIENT_STREAM, PacketType::SERVER_STREAM};
     }
+
+// Workaround for GCC 8 bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=86678
+#if defined(__GNUC__) && __GNUC__ < 9
+    return {};
+#else
     PW_ASSERT(false);
+#endif  // defined(__GNUC__) && __GNUC__ < 9
   }
 
   internal::test::PacketsView view_;

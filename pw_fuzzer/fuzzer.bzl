@@ -15,13 +15,13 @@
 
 load("@rules_fuzzing//fuzzing:cc_defs.bzl", "cc_fuzz_test")
 load(
-    "//pw_build:bazel_internal/pigweed_internal.bzl",
+    "//pw_build/bazel_internal:pigweed_internal.bzl",
     _add_cc_and_c_targets = "add_cc_and_c_targets",
     _has_pw_assert_dep = "has_pw_assert_dep",
 )
 
 def pw_cc_fuzz_test(**kwargs):
-    # TODO(pwbug/440): Remove this implicit dependency once we have a better
+    # TODO(b/234877642): Remove this implicit dependency once we have a better
     # way to handle the facades without introducing a circular dependency into
     # the build.
     if not _has_pw_assert_dep(kwargs["deps"]):

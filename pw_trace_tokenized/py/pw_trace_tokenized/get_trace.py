@@ -12,16 +12,19 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under
 # the License.
-r"""
+"""
 Generates json trace files viewable using chrome://tracing using RPCs from a
 connected HdlcRpcClient.
 
 Example usage:
 python pw_trace_tokenized/py/pw_trace_tokenized/get_trace.py -s localhost:33000
   -o trace.json
-  -t out/host_clang_debug/obj/pw_trace_tokenized/bin/trace_tokenized_example_rpc
+  -t
+  out/pw_strict_host_clang_debug/obj/pw_trace_tokenized/bin/trace_tokenized_example_rpc
   pw_trace_tokenized/pw_trace_protos/trace_rpc.proto
-"""
+"""  # pylint: disable=line-too-long
+# pylint: enable=line-too-long
+
 import argparse
 import logging
 import glob
@@ -134,6 +137,12 @@ def _parse_args():
         dest='ticks_per_second',
         default=1000,
         help=('The clock rate of the trace events (Default 1000).'))
+    parser.add_argument(
+        '--time_offset',
+        type=int,
+        dest='time_offset',
+        default=0,
+        help=('Time offset (us) of the trace events (Default 0).'))
     return parser.parse_args()
 
 
@@ -144,7 +153,8 @@ def _main(args):
     client = get_hdlc_rpc_client(**vars(args))
     data = get_trace_data_from_device(client)
     events = trace_tokenized.get_trace_events([token_database], data,
-                                              args.ticks_per_second)
+                                              args.ticks_per_second,
+                                              args.time_offset)
     json_lines = trace.generate_trace_json(events)
     trace_tokenized.save_trace_file(json_lines, args.trace_output_file)
 

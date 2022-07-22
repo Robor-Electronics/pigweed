@@ -28,13 +28,17 @@ declare_args() {
   pw_toolchain_STATIC_ANALYSIS_SKIP_SOURCES_RES = []
 
   # Disable clang-tidy for specific include paths. In the clang-tidy command,
-  # include paths that end with one of these are switched from -I to -isystem,
-  # which causes clang-tidy to ignore them. Unfortunately, clang-tidy provides
-  # no other way to filter header files.
+  # include paths that end with one of these, or match as a regular expression,
+  # are switched from -I to -isystem, which causes clang-tidy to ignore them.
+  # Unfortunately, clang-tidy provides no other way to filter header files.
   #
   # For example, the following ignores header files in "mbedtls/include":
   #
   #   pw_toolchain_STATIC_ANALYSIS_SKIP_INCLUDE_PATHS = ["mbedtls/include"]
+  #
+  # While the following ignores all third-party header files:
+  #
+  #   pw_toolchain_STATIC_ANALYSIS_SKIP_INCLUDE_PATHS = [".*/third_party/.*"]
   #
   pw_toolchain_STATIC_ANALYSIS_SKIP_INCLUDE_PATHS = []
 }
@@ -62,10 +66,11 @@ template("pw_static_analysis_toolchain") {
   foreach(pattern, pw_toolchain_STATIC_ANALYSIS_SKIP_SOURCES_RES) {
     _source_exclude = _source_exclude + " --source-exclude '${pattern}'"
   }
-
-  _skip_include_path =
-      "--skip-include-path " +
-      string_join(" ", pw_toolchain_STATIC_ANALYSIS_SKIP_INCLUDE_PATHS)
+  _skip_include_path = ""
+  foreach(pattern, pw_toolchain_STATIC_ANALYSIS_SKIP_INCLUDE_PATHS) {
+    _skip_include_path =
+        _skip_include_path + " --skip-include-path '${pattern}'"
+  }
 
   toolchain(target_name) {
     # Uncomment this line to see which toolchains generate other toolchains.
@@ -97,6 +102,7 @@ template("pw_static_analysis_toolchain") {
                               "--export-fixes {{output}}.yaml",
                               "--",
                               invoker.cc,
+                              "END_OF_INVOKER",
                               "-MMD -MF $depfile",  # Write out dependencies.
                               "{{cflags}}",
                               "{{cflags_c}}",  # Must come after {{cflags}}.
@@ -124,6 +130,7 @@ template("pw_static_analysis_toolchain") {
                               "--export-fixes {{output}}.yaml",
                               "--",
                               invoker.cxx,
+                              "END_OF_INVOKER",
                               "-MMD -MF $depfile",  # Write out dependencies.
                               "{{cflags}}",
                               "{{cflags_cc}}",  # Must come after {{cflags}}.

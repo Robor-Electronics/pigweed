@@ -12,10 +12,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-#include "pw_unit_test/framework.h"
+#include "pw_unit_test/internal/framework.h"
 
 #include <algorithm>
 #include <cstring>
+
+#include "pw_assert/check.h"
 
 namespace pw {
 namespace unit_test {
@@ -92,6 +94,9 @@ void Framework::EndCurrentTest() {
     case TestResult::kFailure:
       run_tests_summary_.failed_tests++;
       break;
+    case TestResult::kSkipped:
+      run_tests_summary_.skipped_tests++;
+      break;
   }
 
   if (event_handler_ != nullptr) {
@@ -101,10 +106,24 @@ void Framework::EndCurrentTest() {
   current_test_ = nullptr;
 }
 
+void Framework::CurrentTestSkip(int line) {
+  if (current_result_ == TestResult::kSuccess) {
+    current_result_ = TestResult::kSkipped;
+  }
+  return CurrentTestExpectSimple(
+      "(test skipped)", "(test skipped)", line, true);
+}
+
 void Framework::CurrentTestExpectSimple(const char* expression,
                                         const char* evaluated_expression,
                                         int line,
                                         bool success) {
+  PW_CHECK_NOTNULL(
+      current_test_,
+      "EXPECT/ASSERT was called when no test was running! EXPECT/ASSERT cannot "
+      "be used from static constructors/destructors or before or after "
+      "RUN_ALL_TESTS().");
+
   if (!success) {
     current_result_ = TestResult::kFailure;
     exit_status_ = 1;

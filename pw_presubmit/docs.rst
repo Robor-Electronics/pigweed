@@ -156,6 +156,24 @@ pw_presubmit
 
 .. _example-script:
 
+
+Git hook
+--------
+You can run a presubmit program or step as a `git hook
+<https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks>`_ using
+``pw_presubmit.install_hook``.  This can be used to run certain presubmit
+checks before a change is pushed to a remote.
+
+We strongly recommend that you only run fast (< 15 seconds) and trivial checks
+as push hooks, and perform slower or more complex ones in CI. This is because,
+
+* Running slow checks in the push hook will force you to wait longer for
+  ``git push`` to complete, and
+* If your change fails one of the checks at this stage, it will not yet be
+  uploaded to the remote, so you'll have a harder time debugging any failures
+  (sharing the change with your colleagues, linking to it from an issue
+  tracker, etc).
+
 Example
 =======
 A simple example presubmit check script follows. This can be copied-and-pasted
@@ -173,7 +191,7 @@ See ``pigweed_presubmit.py`` for a more complex presubmit check script example.
   from pathlib import Path
   import re
   import sys
-  from typing import List, Pattern
+  from typing import List, Optional, Pattern
 
   try:
       import pw_cli.log
@@ -265,16 +283,35 @@ See ``pigweed_presubmit.py`` for a more complex presubmit check script example.
   PROGRAMS = pw_presubmit.Programs(other=OTHER, quick=QUICK, full=FULL)
 
 
-  def run(install: bool, **presubmit_args) -> int:
+  #
+  # Allowlist of remote refs for presubmit. If the remote ref being pushed to
+  # matches any of these values (with regex matching), then the presubmits
+  # checks will be run before pushing.
+  #
+  PRE_PUSH_REMOTE_REF_ALLOWLIST = (
+      'refs/for/main',
+  )
+
+
+  def run(install: bool, remote_ref: Optional[str],  **presubmit_args) -> int:
       """Process the --install argument then invoke pw_presubmit."""
 
       # Install the presubmit Git pre-push hook, if requested.
       if install:
-          install_hook(__file__, 'pre-push', ['--base', 'HEAD~'],
-                       git_repo.root())
+          # '$remote_ref' will be replaced by the actual value of the remote ref
+          # at runtime.
+          install_git_hook('pre-push', [
+              'python', '-m', 'tools.presubmit_check', '--base', 'HEAD~',
+              '--remote-ref', '$remote_ref'
+          ])
           return 0
 
-      return cli.run(root=PROJECT_ROOT, **presubmit_args)
+      # Run the checks if either no remote_ref was passed, or if the remote ref
+      # matches anything in the allowlist.
+      if remote_ref is None or any(
+              re.search(pattern, remote_ref)
+              for pattern in PRE_PUSH_REMOTE_REF_ALLOWLIST):
+          return cli.run(root=PROJECT_ROOT, **presubmit_args)
 
 
   def main() -> int:
@@ -288,6 +325,16 @@ See ``pigweed_presubmit.py`` for a more complex presubmit check script example.
           action='store_true',
           help='Install the presubmit as a Git pre-push hook and exit.')
 
+      # Define an optional flag to pass the remote ref into this script, if it
+      # is run as a pre-push hook. The destination variable in the parsed args
+      # will be `remote_ref`, as dashes are replaced with underscores to make
+      # valid variable names.
+      parser.add_argument(
+          '--remote-ref',
+          default=None,
+          nargs='?',  # Make optional.
+          help='Remote ref of the push command, for use by the pre-push hook.')
+
       return run(**vars(parser.parse_args()))
 
   if __name__ == '__main__':
@@ -300,3 +347,44 @@ Code formatting tools
 The ``pw_presubmit.format_code`` module formats supported source files using
 external code format tools. The file ``format_code.py`` can be invoked directly
 from the command line or from ``pw`` as ``pw format``.
+
+Example
+=======
+A simple example of adding support for a custom format. This code wraps the
+built in formatter to add a new format. It could also be used to replace
+a formatter or remove/disable a PigWeed supplied one.
+
+.. code-block:: python
+
+  #!/usr/bin/env python
+  """Formats files in repository. """
+
+  import logging
+  import sys
+
+  import pw_cli.log
+  from pw_presubmit import format_code
+  from your_project import presubmit_checks
+  from your_project import your_check
+
+  YOUR_CODE_FORMAT = CodeFormat('YourFormat',
+                                filter=FileFilter(suffix=('.your', )),
+                                check=your_check.check,
+                                fix=your_check.fix)
+
+  CODE_FORMATS = (*format_code.CODE_FORMATS, YOUR_CODE_FORMAT)
+
+  def _run(exclude, **kwargs) -> int:
+      """Check and fix formatting for source files in the repo."""
+      return format_code.format_paths_in_repo(exclude=exclude,
+                                              code_formats=CODE_FORMATS,
+                                              **kwargs)
+
+
+  def main():
+      return _run(**vars(format_code.arguments(git_paths=True).parse_args()))
+
+
+  if __name__ == '__main__':
+      pw_cli.log.install(logging.INFO)
+      sys.exit(main())

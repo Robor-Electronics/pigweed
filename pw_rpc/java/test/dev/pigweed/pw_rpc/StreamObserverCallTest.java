@@ -20,17 +20,16 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import dev.pigweed.pw.rpc.internal.Packet.PacketType;
-import dev.pigweed.pw.rpc.internal.Packet.RpcPacket;
 import dev.pigweed.pw_rpc.StreamObserverCall.StreamResponseFuture;
 import dev.pigweed.pw_rpc.StreamObserverCall.UnaryResponseFuture;
+import dev.pigweed.pw_rpc.internal.Packet.PacketType;
+import dev.pigweed.pw_rpc.internal.Packet.RpcPacket;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
@@ -95,6 +94,20 @@ public final class StreamObserverCallTest {
   @Test
   public void cancel_deactivates() throws Exception {
     streamObserverCall.cancel();
+
+    assertThat(streamObserverCall.active()).isFalse();
+  }
+
+  @Test
+  public void abandon_doesNotSendCancelPacket() throws Exception {
+    streamObserverCall.abandon();
+
+    verify(mockOutput, never()).send(cancel());
+  }
+
+  @Test
+  public void abandon_deactivates() {
+    streamObserverCall.abandon();
 
     assertThat(streamObserverCall.active()).isFalse();
   }
@@ -191,7 +204,7 @@ public final class StreamObserverCallTest {
   }
 
   @Test
-  public void unaryFuture_serverError_setsException() throws Exception {
+  public void unaryFuture_serverError_setsException() {
     UnaryResponseFuture<SomeMessage, AnotherMessage> call =
         new UnaryResponseFuture<>(rpcManager, rpc, SomeMessage.getDefaultInstance());
 
@@ -208,7 +221,7 @@ public final class StreamObserverCallTest {
   }
 
   @Test
-  public void unaryFuture_noMessage_setsException() throws Exception {
+  public void unaryFuture_noMessage_setsException() {
     UnaryResponseFuture<SomeMessage, AnotherMessage> call =
         new UnaryResponseFuture<>(rpcManager, rpc, SomeMessage.getDefaultInstance());
 
@@ -220,7 +233,7 @@ public final class StreamObserverCallTest {
   }
 
   @Test
-  public void unaryFuture_multipleResponses_setsException() throws Exception {
+  public void unaryFuture_multipleResponses_setsException() {
     UnaryResponseFuture<SomeMessage, AnotherMessage> call =
         new UnaryResponseFuture<>(rpcManager, rpc, SomeMessage.getDefaultInstance());
 
@@ -235,7 +248,7 @@ public final class StreamObserverCallTest {
   }
 
   @Test
-  public void bidirectionalStreamingfuture_responses_setsValue() throws Exception {
+  public void bidirectionalStreamingFuture_responses_setsValue() throws Exception {
     List<AnotherMessage> responses = new ArrayList<>();
     StreamResponseFuture<SomeMessage, AnotherMessage> call =
         new StreamResponseFuture<>(rpcManager, rpc, responses::add, null);
@@ -252,7 +265,7 @@ public final class StreamObserverCallTest {
   }
 
   @Test
-  public void bidirectionalStreamingfuture_serverError_setsException() throws Exception {
+  public void bidirectionalStreamingFuture_serverError_setsException() {
     StreamResponseFuture<SomeMessage, AnotherMessage> call =
         new StreamResponseFuture<>(rpcManager, rpc, (msg) -> {}, null);
 

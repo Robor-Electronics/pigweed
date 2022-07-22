@@ -24,9 +24,18 @@ config("public_include_path") {
 
 group("pw_containers") {
   public_deps = [
+    ":algorithm",
     ":flat_map",
     ":intrusive_list",
     ":vector",
+  ]
+}
+
+pw_source_set("algorithm") {
+  public_configs = [ ":public_include_path" ]
+  public = [
+    "public/pw_containers/algorithm.h",
+    "public/pw_containers/internal/algorithm_internal.h",
   ]
 }
 
@@ -38,6 +47,12 @@ pw_source_set("filtered_view") {
 pw_source_set("flat_map") {
   public_configs = [ ":public_include_path" ]
   public = [ "public/pw_containers/flat_map.h" ]
+}
+
+pw_source_set("iterator") {
+  public_configs = [ ":public_include_path" ]
+  public_deps = [ dir_pw_polyfill ]
+  public = [ "public/pw_containers/iterator.h" ]
 }
 
 pw_source_set("to_array") {
@@ -68,6 +83,7 @@ pw_source_set("intrusive_list") {
 
 pw_test_group("tests") {
   tests = [
+    ":algorithm_test",
     ":filtered_view_test",
     ":flat_map_test",
     ":intrusive_list_test",
@@ -77,11 +93,22 @@ pw_test_group("tests") {
   ]
 }
 
+pw_test("algorithm_test") {
+  sources = [ "algorithm_test.cc" ]
+  deps = [
+    ":algorithm",
+    ":intrusive_list",
+    ":vector",
+    dir_pw_span,
+  ]
+}
+
 pw_test("filtered_view_test") {
   sources = [ "filtered_view_test.cc" ]
   deps = [
     ":filtered_view",
     ":intrusive_list",
+    dir_pw_span,
   ]
 }
 

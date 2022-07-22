@@ -18,40 +18,12 @@
 
 namespace pw::transfer::internal {
 
-void ClientContext::StartRead(Client& client,
-                              uint32_t transfer_id,
-                              work_queue::WorkQueue& work_queue,
-                              EncodingBuffer& encoding_buffer,
-                              stream::Writer& writer,
-                              rpc::RawClientReaderWriter& stream,
-                              Function<void(Status)>&& on_completion,
-                              chrono::SystemClock::duration timeout) {
-  PW_DCHECK(!active());
-  PW_DCHECK(on_completion != nullptr);
-
-  client_ = &client;
-  on_completion_ = std::move(on_completion);
-
-  InitializeForReceive(
-      transfer_id, work_queue, encoding_buffer, stream, writer, timeout);
-}
-
-void ClientContext::StartWrite(Client& client,
-                               uint32_t transfer_id,
-                               work_queue::WorkQueue& work_queue,
-                               EncodingBuffer& encoding_buffer,
-                               stream::Reader& reader,
-                               rpc::RawClientReaderWriter& stream,
-                               Function<void(Status)>&& on_completion,
-                               chrono::SystemClock::duration timeout) {
-  PW_DCHECK(!active());
-  PW_DCHECK(on_completion != nullptr);
-
-  client_ = &client;
-  on_completion_ = std::move(on_completion);
-
-  InitializeForTransmit(
-      transfer_id, work_queue, encoding_buffer, stream, reader, timeout);
+Status ClientContext::FinalCleanup(Status status) {
+  PW_DASSERT(active());
+  if (on_completion_ != nullptr) {
+    on_completion_(status);
+  }
+  return OkStatus();
 }
 
 }  // namespace pw::transfer::internal

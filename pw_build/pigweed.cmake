@@ -13,6 +13,8 @@
 # the License.
 include_guard(GLOBAL)
 
+cmake_minimum_required(VERSION 3.16)
+
 # The PW_ROOT environment variable should be set in bootstrap. If it is not set,
 # set it to the root of the Pigweed repository.
 if("$ENV{PW_ROOT}" STREQUAL "")
@@ -24,7 +26,7 @@ endif()
 
 # Wrapper around cmake_parse_arguments that fails with an error if any arguments
 # remained unparsed.
-macro(_pw_parse_argv_strict function start_arg options one multi)
+macro(pw_parse_arguments_strict function start_arg options one multi)
   cmake_parse_arguments(PARSE_ARGV
       "${start_arg}" arg "${options}" "${one}" "${multi}"
   )
@@ -35,6 +37,38 @@ macro(_pw_parse_argv_strict function start_arg options one multi)
         "Valid arguments: ${_all_args}"
     )
   endif()
+endmacro()
+
+# Checks that one or more variables are set. This is used to check that
+# arguments were provided to a function. Fails with FATAL_ERROR if
+# ${ARG_PREFIX}${name} is empty. The FUNCTION_NAME is used in the error message.
+# If FUNCTION_NAME is "", it is set to CMAKE_CURRENT_FUNCTION.
+#
+# Usage:
+#
+#   pw_require_args(FUNCTION_NAME ARG_PREFIX ARG_NAME [ARG_NAME ...])
+#
+# Examples:
+#
+#   # Checks that arg_FOO is non-empty, using the current function name.
+#   pw_require_args("" arg_ FOO)
+#
+#   # Checks that FOO and BAR are non-empty, using function name "do_the_thing".
+#   pw_require_args(do_the_thing "" FOO BAR)
+#
+macro(pw_require_args FUNCTION_NAME ARG_PREFIX)
+  if("${FUNCTION_NAME}" STREQUAL "")
+    set(_pw_require_args_FUNCTION_NAME "${CMAKE_CURRENT_FUNCTION}")
+  else()
+    set(_pw_require_args_FUNCTION_NAME "${FUNCTION_NAME}")
+  endif()
+
+  foreach(name IN ITEMS ${ARGN})
+    if("${${ARG_PREFIX}${name}}" STREQUAL "")
+      message(FATAL_ERROR "A value must be provided for ${name} in "
+          "${_pw_require_args_FUNCTION_NAME}.")
+    endif()
+  endforeach()
 endmacro()
 
 # Automatically creates a library and test targets for the files in a module.
@@ -68,7 +102,7 @@ endmacro()
 #   PRIVATE_DEPS - private target_link_libraries arguments
 #
 function(pw_auto_add_simple_module MODULE)
-  _pw_parse_argv_strict(pw_auto_add_simple_module 1
+  pw_parse_arguments_strict(pw_auto_add_simple_module 1
       ""
       "IMPLEMENTS_FACADE"
       "PUBLIC_DEPS;PRIVATE_DEPS;TEST_DEPS"
@@ -122,7 +156,7 @@ endfunction(pw_auto_add_simple_module)
 #  GROUPS - groups in addition to MODULE to which to add these tests
 #
 function(pw_auto_add_module_tests MODULE)
-  _pw_parse_argv_strict(pw_auto_add_module_tests 1
+  pw_parse_arguments_strict(pw_auto_add_module_tests 1
       ""
       ""
       "PRIVATE_DEPS;GROUPS"
@@ -150,15 +184,25 @@ function(pw_auto_add_module_tests MODULE)
   endforeach()
 endfunction(pw_auto_add_module_tests)
 
-# Sets the provided variable to the common library arguments.
-macro(_pw_library_args variable)
-  set("${variable}" SOURCES HEADERS PUBLIC_DEPS PRIVATE_DEPS ${ARGN})
+# Sets the provided variable to the multi_value_keywords from pw_add_library.
+macro(_pw_add_library_multi_value_args variable)
+  set("${variable}" SOURCES HEADERS
+                    PUBLIC_DEPS PRIVATE_DEPS
+                    PUBLIC_INCLUDES PRIVATE_INCLUDES
+                    PUBLIC_DEFINES PRIVATE_DEFINES
+                    PUBLIC_COMPILE_OPTIONS PRIVATE_COMPILE_OPTIONS
+                    PUBLIC_LINK_OPTIONS PRIVATE_LINK_OPTIONS "${ARGN}")
 endmacro()
 
-# Creates a library in a module. The library has access to the public/ include
-# directory.
+# pw_add_library: Creates a CMake library target.
 #
-# Args:
+# Required Args:
+#
+#   <name> - The name of the library target to be created.
+#   <type> - The library type which must be INTERFACE, OBJECT, STATIC, SHARED,
+#            or MODULE.
+#
+# Optional Args:
 #
 #   SOURCES - source files for this library
 #   HEADERS - header files for this library
@@ -166,45 +210,38 @@ endmacro()
 #   PRIVATE_DEPS - private target_link_libraries arguments
 #   PUBLIC_INCLUDES - public target_include_directories argument
 #   PRIVATE_INCLUDES - public target_include_directories argument
-#   IMPLEMENTS_FACADES - which facades this library implements
 #   PUBLIC_DEFINES - public target_compile_definitions arguments
 #   PRIVATE_DEFINES - private target_compile_definitions arguments
 #   PUBLIC_COMPILE_OPTIONS - public target_compile_options arguments
 #   PRIVATE_COMPILE_OPTIONS - private target_compile_options arguments
 #   PUBLIC_LINK_OPTIONS - public target_link_options arguments
 #   PRIVATE_LINK_OPTIONS - private target_link_options arguments
-#
-function(pw_add_module_library NAME)
-  _pw_library_args(
-      list_args
-          PUBLIC_INCLUDES PRIVATE_INCLUDES
-          IMPLEMENTS_FACADES
-          PUBLIC_DEFINES PRIVATE_DEFINES
-          PUBLIC_COMPILE_OPTIONS PRIVATE_COMPILE_OPTIONS
-          PUBLIC_LINK_OPTIONS PRIVATE_LINK_OPTIONS
-  )
-  _pw_parse_argv_strict(pw_add_module_library 1 "" "" "${list_args}")
+function(pw_add_library NAME TYPE)
+  set(num_positional_args 2)
+  set(option_args)
+  set(one_value_args)
+  _pw_add_library_multi_value_args(multi_value_args)
+  pw_parse_arguments_strict(
+      pw_add_library "${num_positional_args}" "${option_args}"
+      "${one_value_args}" "${multi_value_args}")
 
-  # Check that the library's name is prefixed by the module name.
-  get_filename_component(module "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
-
-  if(NOT "${NAME}" MATCHES "${module}(\\.[^\\.]+)?(\\.facade)?$")
-    message(FATAL_ERROR
-        "Module libraries must match the module name or be in the form "
-        "'MODULE_NAME.LIBRARY_NAME'. The library '${NAME}' does not match."
-    )
-  endif()
+  add_library("${NAME}" "${TYPE}" EXCLUDE_FROM_ALL)
 
   # Instead of forking all of the code below or injecting an empty source file,
-  # conditionally select PUBLIC vs INTERFACE depending on whether there are
-  # sources to compile.
-  if(NOT "${arg_SOURCES}" STREQUAL "")
-    add_library("${NAME}" EXCLUDE_FROM_ALL)
-    set(public_or_interface PUBLIC)
-  else("${arg_SOURCES}" STREQUAL "")
-    add_library("${NAME}" EXCLUDE_FROM_ALL INTERFACE)
+  # conditionally select PUBLIC vs INTERFACE depending on the type.
+  if("${TYPE}" STREQUAL "INTERFACE")
     set(public_or_interface INTERFACE)
-  endif(NOT "${arg_SOURCES}" STREQUAL "")
+    if(NOT "${arg_SOURCES}" STREQUAL "")
+      message(
+        SEND_ERROR "${NAME} cannot have sources as it's an INTERFACE library")
+    endif(NOT "${arg_SOURCES}" STREQUAL "")
+  else()  # ${TYPE} != INTERFACE
+    set(public_or_interface PUBLIC)
+    if("${arg_SOURCES}" STREQUAL "")
+      message(
+        SEND_ERROR "${NAME} must have SOURCES as it's not an INTERFACE library")
+    endif("${arg_SOURCES}" STREQUAL "")
+  endif("${TYPE}" STREQUAL "INTERFACE")
 
   target_sources("${NAME}" PRIVATE ${arg_SOURCES} ${arg_HEADERS})
 
@@ -222,83 +259,191 @@ function(pw_add_module_library NAME)
     endif()
   endforeach()
 
-  if(NOT "${arg_PUBLIC_INCLUDES}" STREQUAL "")
-    target_include_directories("${NAME}"
-      ${public_or_interface}
-        ${arg_PUBLIC_INCLUDES}
-    )
-  else("${arg_PUBLIC_INCLUDES}" STREQUAL "")
-    # TODO(pwbug/601): Deprecate this legacy implicit PUBLIC_INCLUDES.
-    target_include_directories("${NAME}" ${public_or_interface} public)
-  endif(NOT "${arg_PUBLIC_INCLUDES}" STREQUAL "")
+  # Public and private target_include_directories.
+  target_include_directories("${NAME}" PRIVATE ${arg_PRIVATE_INCLUDES})
+  target_include_directories(
+        "${NAME}" ${public_or_interface} ${arg_PUBLIC_INCLUDES})
 
-  if(NOT "${arg_PRIVATE_INCLUDES}" STREQUAL "")
-    target_include_directories("${NAME}" PRIVATE ${arg_PRIVATE_INCLUDES})
-  endif(NOT "${arg_PRIVATE_INCLUDES}" STREQUAL "")
+  # Public and private target_link_libraries.
+  if(NOT "${arg_SOURCES}" STREQUAL "")
+    target_link_libraries("${NAME}" PRIVATE ${arg_PRIVATE_DEPS})
+  endif(NOT "${arg_SOURCES}" STREQUAL "")
+  target_link_libraries("${NAME}" ${public_or_interface} ${arg_PUBLIC_DEPS})
 
-  target_link_libraries("${NAME}"
-    ${public_or_interface}
-      pw_build
-      ${arg_PUBLIC_DEPS}
+  # The target_compile_options are always added before target_link_libraries'
+  # target_compile_options. In order to support the enabling of warning
+  # compile options injected via arg_PRIVATE_DEPS (target_link_libraries
+  # dependencies) that are partially disabled via arg_PRIVATE_COMPILE_OPTIONS (
+  # target_compile_options), the defines, compile options, and link options are
+  # also added as target_link_libraries dependencies. This enables reasonable
+  # ordering between the enabling (target_link_libraries) and disabling (
+  # now also target_link_libraries) of compiler warnings.
+
+  # Add the NAME._config target_link_libraries dependency with the
+  # PRIVATE_DEFINES, PRIVATE_COMPILE_OPTIONS, and PRIVATE_LINK_OPTIONS.
+  if(NOT "${TYPE}" STREQUAL "INTERFACE")
+    target_link_libraries("${NAME}" PRIVATE "${NAME}._config")
+    add_library("${NAME}._config" INTERFACE EXCLUDE_FROM_ALL)
+    if(NOT "${arg_PRIVATE_DEFINES}" STREQUAL "")
+      target_compile_definitions(
+          "${NAME}._config" INTERFACE ${arg_PRIVATE_DEFINES})
+    endif(NOT "${arg_PRIVATE_DEFINES}" STREQUAL "")
+    if(NOT "${arg_PRIVATE_COMPILE_OPTIONS}" STREQUAL "")
+      target_compile_options(
+          "${NAME}._config" INTERFACE ${arg_PRIVATE_COMPILE_OPTIONS})
+    endif(NOT "${arg_PRIVATE_COMPILE_OPTIONS}" STREQUAL "")
+    if(NOT "${arg_PRIVATE_LINK_OPTIONS}" STREQUAL "")
+      target_link_options("${NAME}._config" INTERFACE ${arg_PRIVATE_LINK_OPTIONS})
+    endif(NOT "${arg_PRIVATE_LINK_OPTIONS}" STREQUAL "")
+  endif(NOT "${TYPE}" STREQUAL "INTERFACE")
+
+  # Add the NAME._public_config target_link_libraries dependency with the
+  # PUBLIC_DEFINES, PUBLIC_COMPILE_OPTIONS, and PUBLIC_LINK_OPTIONS.
+  add_library("${NAME}._public_config" INTERFACE EXCLUDE_FROM_ALL)
+  target_link_libraries(
+      "${NAME}" ${public_or_interface} "${NAME}._public_config")
+  if(NOT "${arg_PUBLIC_DEFINES}" STREQUAL "")
+    target_compile_definitions(
+        "${NAME}._public_config" INTERFACE ${arg_PUBLIC_DEFINES})
+  endif(NOT "${arg_PUBLIC_DEFINES}" STREQUAL "")
+  if(NOT "${arg_PUBLIC_COMPILE_OPTIONS}" STREQUAL "")
+    target_compile_options(
+        "${NAME}._public_config" INTERFACE ${arg_PUBLIC_COMPILE_OPTIONS})
+  endif(NOT "${arg_PUBLIC_COMPILE_OPTIONS}" STREQUAL "")
+  if(NOT "${arg_PUBLIC_LINK_OPTIONS}" STREQUAL "")
+    target_link_options(
+        "${NAME}._public_config" INTERFACE ${arg_PUBLIC_LINK_OPTIONS})
+  endif(NOT "${arg_PUBLIC_LINK_OPTIONS}" STREQUAL "")
+endfunction(pw_add_library)
+
+# Checks that the library's name is prefixed by the relative path with dot
+# separators instead of forward slashes. Ignores paths not under the root
+# directory.
+#
+# Optional Args:
+#
+#   REMAP_PREFIXES - support remapping a prefix for checks
+#
+function(_pw_check_name_is_relative_to_root NAME ROOT)
+  pw_parse_arguments_strict(_pw_check_name_is_relative_to_root
+      2 "" "" "REMAP_PREFIXES")
+
+  file(RELATIVE_PATH rel_path "${ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}")
+  if("${rel_path}" MATCHES "^\\.\\.")
+    return()  # Ignore paths not under ROOT
+  endif()
+
+  list(LENGTH arg_REMAP_PREFIXES remap_arg_count)
+  if("${remap_arg_count}" EQUAL 2)
+    list(GET arg_REMAP_PREFIXES 0 from_prefix)
+    list(GET arg_REMAP_PREFIXES 1 to_prefix)
+    string(REGEX REPLACE "^${from_prefix}" "${to_prefix}" rel_path "${rel_path}")
+  elseif(NOT "${remap_arg_count}" EQUAL 0)
+    message(FATAL_ERROR
+        "If REMAP_PREFIXES is specified, exactly two arguments must be given.")
+  endif()
+
+  if(NOT "${rel_path}" MATCHES "^\\.\\..*")
+    string(REPLACE "/" "." dot_rel_path "${rel_path}")
+    if(NOT "${NAME}" MATCHES "^${dot_rel_path}(\\.[^\\.]+)?(\\.facade)?$")
+      message(FATAL_ERROR
+          "Module libraries under ${ROOT} must match the module name or be in "
+          "the form 'PATH_TO.THE_TARGET.NAME'. The library '${NAME}' does not "
+          "match. Expected ${dot_rel_path}.LIBRARY_NAME"
+      )
+    endif()
+  endif()
+endfunction(_pw_check_name_is_relative_to_root)
+
+# Creates a pw module library.
+#
+# Required Args:
+#
+#   <name> - The name of the library target to be created.
+#
+# Optional Args:
+#
+#   IMPLEMENTS_FACADES - which facades this module library implements
+#   SOURCES - source files for this library
+#   HEADERS - header files for this library
+#   PUBLIC_DEPS - public target_link_libraries arguments
+#   PRIVATE_DEPS - private target_link_libraries arguments
+#   PUBLIC_INCLUDES - public target_include_directories argument
+#   PRIVATE_INCLUDES - public target_include_directories argument
+#   PUBLIC_DEFINES - public target_compile_definitions arguments
+#   PRIVATE_DEFINES - private target_compile_definitions arguments
+#   PUBLIC_COMPILE_OPTIONS - public target_compile_options arguments
+#   PRIVATE_COMPILE_OPTIONS - private target_compile_options arguments
+#   PUBLIC_LINK_OPTIONS - public target_link_options arguments
+#   PRIVATE_LINK_OPTIONS - private target_link_options arguments
+#
+function(pw_add_module_library NAME)
+  _pw_add_library_multi_value_args(multi_value_args IMPLEMENTS_FACADES)
+  pw_parse_arguments_strict(pw_add_module_library 1 "" "" "${multi_value_args}")
+
+  _pw_check_name_is_relative_to_root("${NAME}" "$ENV{PW_ROOT}"
+    REMAP_PREFIXES
+      third_party pw_third_party
   )
 
+  # Use STATIC libraries if sources are provided, else instantiate an INTERFACE
+  # library. Also conditionally select PUBLIC vs INTERFACE depending on this
+  # selection.
   if(NOT "${arg_SOURCES}" STREQUAL "")
-    target_link_libraries("${NAME}"
-      PRIVATE
-        pw_build.warnings
-        ${arg_PRIVATE_DEPS}
-    )
+    set(type STATIC)
+    set(public_or_interface PUBLIC)
+  else("${arg_SOURCES}" STREQUAL "")
+    set(type INTERFACE)
+    set(public_or_interface INTERFACE)
   endif(NOT "${arg_SOURCES}" STREQUAL "")
 
+  pw_add_library(${NAME} ${type}
+    SOURCES
+      ${arg_SOURCES}
+    HEADERS
+      ${arg_HEADERS}
+    PUBLIC_DEPS
+      # TODO(b/232141950): Apply compilation options that affect ABI
+      # globally in the CMake build instead of injecting them into libraries.
+      pw_build
+      ${arg_PUBLIC_DEPS}
+    PRIVATE_DEPS
+      pw_build.warnings
+      ${arg_PRIVATE_DEPS}
+    PUBLIC_INCLUDES
+      ${arg_PUBLIC_INCLUDES}
+    PRIVATE_INCLUDES
+      ${arg_PRIVATE_INCLUDES}
+    PUBLIC_DEFINES
+      ${arg_PUBLIC_DEFINES}
+    PRIVATE_DEFINES
+      ${arg_PRIVATE_DEFINES}
+    PUBLIC_COMPILE_OPTIONS
+      ${arg_PUBLIC_COMPILE_OPTIONS}
+    PRIVATE_COMPILE_OPTIONS
+      ${arg_PRIVATE_COMPILE_OPTIONS}
+    PUBLIC_LINK_OPTIONS
+      ${arg_PUBLIC_LINK_OPTIONS}
+    PRIVATE_LINK_OPTIONS
+      ${arg_PRIVATE_LINK_OPTIONS}
+  )
+
+  # TODO(b/235273746): Deprecate this legacy implicit PUBLIC_INCLUDES.
+  if("${arg_PUBLIC_INCLUDES}" STREQUAL "")
+    target_include_directories("${NAME}" ${public_or_interface} public)
+  endif("${arg_PUBLIC_INCLUDES}" STREQUAL "")
+
   if(NOT "${arg_IMPLEMENTS_FACADES}" STREQUAL "")
-    target_include_directories("${NAME}"
-      ${public_or_interface}
-        public_overrides
-    )
+    # TODO(b/235273746): Deprecate this legacy implicit PUBLIC_INCLUDES.
     if("${arg_PUBLIC_INCLUDES}" STREQUAL "")
-      # TODO(pwbug/601): Deprecate this legacy implicit PUBLIC_INCLUDES.
-      target_include_directories("${NAME}"
-        ${public_or_interface}
-          public_overrides
-      )
+      target_include_directories(
+        "${NAME}" ${public_or_interface} public_overrides)
     endif("${arg_PUBLIC_INCLUDES}" STREQUAL "")
+
     set(facades ${arg_IMPLEMENTS_FACADES})
     list(TRANSFORM facades APPEND ".facade")
     target_link_libraries("${NAME}" ${public_or_interface} ${facades})
   endif(NOT "${arg_IMPLEMENTS_FACADES}" STREQUAL "")
-
-  if(NOT "${arg_PUBLIC_DEFINES}" STREQUAL "")
-    target_compile_definitions("${NAME}"
-      ${public_or_interface}
-        ${arg_PUBLIC_DEFINES}
-    )
-  endif(NOT "${arg_PUBLIC_DEFINES}" STREQUAL "")
-
-  if(NOT "${arg_PRIVATE_DEFINES}" STREQUAL "")
-    target_compile_definitions("${NAME}" PRIVATE ${arg_PRIVATE_DEFINES})
-  endif(NOT "${arg_PRIVATE_DEFINES}" STREQUAL "")
-
-  if(NOT "${arg_PUBLIC_COMPILE_OPTIONS}" STREQUAL "")
-    target_compile_options("${NAME}"
-      ${public_or_interface}
-        ${arg_PUBLIC_COMPILE_OPTIONS}
-    )
-  endif(NOT "${arg_PUBLIC_COMPILE_OPTIONS}" STREQUAL "")
-
-  if(NOT "${arg_PRIVATE_COMPILE_OPTIONS}" STREQUAL "")
-    target_compile_options("${NAME}" PRIVATE ${arg_PRIVATE_COMPILE_OPTIONS})
-  endif(NOT "${arg_PRIVATE_COMPILE_OPTIONS}" STREQUAL "")
-
-  if(NOT "${arg_PUBLIC_LINK_OPTIONS}" STREQUAL "")
-    target_link_options("${NAME}"
-      ${public_or_interface}
-        ${arg_PUBLIC_LINK_OPTIONS}
-    )
-  endif(NOT "${arg_PUBLIC_LINK_OPTIONS}" STREQUAL "")
-
-  if(NOT "${arg_PRIVATE_LINK_OPTIONS}" STREQUAL "")
-    target_link_options("${NAME}" PRIVATE ${arg_PRIVATE_LINK_OPTIONS})
-  endif(NOT "${arg_PRIVATE_LINK_OPTIONS}" STREQUAL "")
 endfunction(pw_add_module_library)
 
 # Declares a module as a facade.
@@ -314,8 +459,8 @@ endfunction(pw_add_module_library)
 #  DEFAULT_BACKEND - which backend to use by default
 #
 function(pw_add_facade NAME)
-  _pw_library_args(list_args)
-  _pw_parse_argv_strict(pw_add_facade 1 "" "DEFAULT_BACKEND" "${list_args}")
+  _pw_add_library_multi_value_args(list_args)
+  pw_parse_arguments_strict(pw_add_facade 1 "" "DEFAULT_BACKEND" "${list_args}")
 
   # If no backend is set, a script that displays an error message is used
   # instead. If the facade is used in the build, it fails with this error.
@@ -369,8 +514,19 @@ endfunction(pw_add_facade)
 
 # Sets which backend to use for the given facade.
 function(pw_set_backend FACADE BACKEND)
-  set("${FACADE}_BACKEND" "${BACKEND}" CACHE STRING "Backend for ${NAME}" FORCE)
+  set("${FACADE}_BACKEND" "${BACKEND}" CACHE STRING "Backend for ${FACADE}" FORCE)
 endfunction(pw_set_backend)
+
+# Zephyr specific wrapper for pw_set_backend, selects the default zephyr backend based on a Kconfig while
+# still allowing the application to set the backend if they choose to
+function(pw_set_zephyr_backend_ifdef COND FACADE BACKEND)
+  get_property(result CACHE "${FACADE}_BACKEND" PROPERTY TYPE)
+  if(${${COND}})
+    if("${result}" STREQUAL "")
+      pw_set_backend("${FACADE}" "${BACKEND}")
+    endif()
+  endif()
+endfunction()
 
 # Set up the default pw_build_DEFAULT_MODULE_CONFIG.
 set("pw_build_DEFAULT_MODULE_CONFIG" pw_build.empty CACHE STRING
@@ -388,7 +544,7 @@ set("pw_build_DEFAULT_MODULE_CONFIG" pw_build.empty CACHE STRING
 #
 #   NAME: name to use for the target which can be depended on for the config.
 function(pw_add_module_config NAME)
-  _pw_parse_argv_strict(pw_add_module_config 1 "" "" "")
+  pw_parse_arguments_strict(pw_add_module_config 1 "" "" "")
 
   # Declare the module configuration variable for this module.
   set("${NAME}" "${pw_build_DEFAULT_MODULE_CONFIG}"
@@ -403,11 +559,19 @@ endfunction(pw_add_module_config)
 #   pw_set_module_config(pw_build_DEFAULT_MODULE_CONFIG my_config)
 #   pw_set_module_config(pw_foo_CONFIG my_foo_config)
 function(pw_set_module_config NAME LIBRARY)
-  _pw_parse_argv_strict(pw_set_module_config 2 "" "" "")
+  pw_parse_arguments_strict(pw_set_module_config 2 "" "" "")
 
   # Update the module configuration variable.
   set("${NAME}" "${LIBRARY}" CACHE STRING "Config for ${NAME}" FORCE)
 endfunction(pw_set_module_config)
+
+set(pw_unit_test_MAIN pw_unit_test.simple_printing_main CACHE STRING
+    "Implementation of a main function for ``pw_test`` unit test binaries.")
+
+set(pw_unit_test_GOOGLETEST_BACKEND pw_unit_test.light CACHE STRING
+    "CMake target which implements GoogleTest, by default pw_unit_test.light \
+     is used. You could, for example, point this at pw_third_party.googletest \
+     if using upstream GoogleTest directly on your host for GoogleMock.")
 
 # Declares a unit test. Creates two targets:
 #
@@ -419,19 +583,25 @@ endfunction(pw_set_module_config)
 #   NAME: name to use for the target
 #   SOURCES: source files for this test
 #   DEPS: libraries on which this test depends
+#   DEFINES: defines to set for the source files in this test
 #   GROUPS: groups to which to add this test; if none are specified, the test is
 #       added to the 'default' and 'all' groups
 #
 function(pw_add_test NAME)
-  _pw_parse_argv_strict(pw_add_test 1 "" "" "SOURCES;DEPS;GROUPS")
+  pw_parse_arguments_strict(pw_add_test 1 "" "" "SOURCES;DEPS;DEFINES;GROUPS")
 
   add_executable("${NAME}" EXCLUDE_FROM_ALL ${arg_SOURCES})
   target_link_libraries("${NAME}"
     PRIVATE
       pw_unit_test
-      pw_unit_test.main
+      ${pw_unit_test_MAIN}
       ${arg_DEPS}
   )
+  target_compile_definitions("${NAME}"
+    PRIVATE
+      ${arg_DEFINES}
+  )
+
   # Tests require at least one source file.
   if(NOT arg_SOURCES)
     target_sources("${NAME}" PRIVATE $<TARGET_PROPERTY:pw_build.empty,SOURCES>)
@@ -480,3 +650,44 @@ function(pw_add_test_to_groups TEST_NAME)
     add_dependencies("pw_run_tests.${group}" "${TEST_NAME}.run")
   endforeach()
 endfunction(pw_add_test_to_groups)
+
+# Adds compiler options to all targets built by CMake. Flags may be added any
+# time after this function is defined. The effect is global; all targets added
+# before or after a pw_add_global_compile_options call will be built with the
+# flags, regardless of where the files are located.
+#
+# pw_add_global_compile_options takes one optional named argument:
+#
+#   LANGUAGES: Which languages (ASM, C, CXX) to apply the options to. Flags
+#       apply to all languages by default.
+#
+# All other arguments are interpreted as compiler options.
+function(pw_add_global_compile_options)
+  cmake_parse_arguments(PARSE_ARGV 0 args "" "" "LANGUAGES")
+
+  set(supported_build_languages ASM C CXX)
+
+  if(NOT args_LANGUAGES)
+    set(args_LANGUAGES ${supported_build_languages})
+  endif()
+
+  # Check the selected language.
+  foreach(lang IN LISTS args_LANGUAGES)
+    if(NOT "${lang}" IN_LIST supported_build_languages)
+      message(FATAL_ERROR "'${lang}' is not a supported language. "
+              "Supported languages: ${supported_build_languages}")
+    endif()
+  endforeach()
+
+  # Enumerate which flags variables to set.
+  foreach(lang IN LISTS args_LANGUAGES)
+    list(APPEND cmake_flags_variables "CMAKE_${lang}_FLAGS")
+  endforeach()
+
+  # Set each flag for each specified flags variable.
+  foreach(variable IN LISTS cmake_flags_variables)
+    foreach(flag IN LISTS args_UNPARSED_ARGUMENTS)
+      set(${variable} "${${variable}} ${flag}" CACHE INTERNAL "" FORCE)
+    endforeach()
+  endforeach()
+endfunction(pw_add_global_compile_options)

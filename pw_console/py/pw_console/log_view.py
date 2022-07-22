@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import copy
+from enum import Enum
 import itertools
 import logging
 import operator
@@ -47,6 +48,12 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__package__)
 
 
+class FollowEvent(Enum):
+    """Follow mode scroll event types."""
+    SEARCH_MATCH = 'scroll_to_bottom'
+    STICKY_FOLLOW = 'scroll_to_bottom_with_sticky_follow'
+
+
 class LogView:
     """Viewing window into a LogStore."""
 
@@ -62,15 +69,33 @@ class LogView:
         self.log_pane = log_pane
         self.log_store = log_store if log_store else LogStore(
             prefs=application.prefs)
+        self.log_store.set_prefs(application.prefs)
         self.log_store.register_viewer(self)
 
-        self.marked_logs: Dict[int, int] = {}
+        self.marked_logs_start: Optional[int] = None
+        self.marked_logs_end: Optional[int] = None
+
         # Search variables
         self.search_text: Optional[str] = None
         self.search_filter: Optional[LogFilter] = None
         self.search_highlight: bool = False
         self.search_matcher = DEFAULT_SEARCH_MATCHER
         self.search_validator = RegexValidator()
+
+        # Container for each log_index matched by active searches.
+        self.search_matched_lines: Dict[int, int] = {}
+        # Background task to find historical matched lines.
+        self.search_match_count_task: Optional[asyncio.Task] = None
+
+        # Flag for automatically jumping to each new search match as they
+        # appear.
+        self.follow_search_match: bool = False
+        self.last_search_matched_log: Optional[int] = None
+
+        # Follow event flag. This is set to by the new_logs_arrived() function
+        # as a signal that the log screen should be scrolled to the bottom.
+        # This is read by render_content() whenever the screen is drawn.
+        self.follow_event: Optional[FollowEvent] = None
 
         self.log_screen = LogScreen(
             get_log_source=self._get_log_lines,
@@ -85,7 +110,7 @@ class LogView:
         self.filters: 'collections.OrderedDict[str, LogFilter]' = (
             collections.OrderedDict())
         self.filtered_logs: collections.deque = collections.deque()
-        self.filter_existing_logs_task = None
+        self.filter_existing_logs_task: Optional[asyncio.Task] = None
 
         # Current log line index state variables:
         self._last_log_index = -1
@@ -118,6 +143,9 @@ class LogView:
         # Cache of formatted text tuples used in the last UI render.
         self._line_fragment_cache: List[StyleAndTextTuples] = []
 
+        # Check if any logs are already in the log_store and update the view.
+        self.new_logs_arrived()
+
     def view_mode_changed(self) -> None:
         self._reset_log_screen_on_next_render = True
 
@@ -145,7 +173,9 @@ class LogView:
     def _set_match_position(self, position: int):
         self.follow = False
         self.log_index = position
+        self.save_search_matched_line(position)
         self.log_screen.reset_logs(log_index=self.log_index)
+        self.log_screen.shift_selected_log_to_center()
         self._user_scroll_event = True
         self.log_pane.application.redraw_ui()
 
@@ -205,11 +235,11 @@ class LogView:
                 self._set_match_position(i)
                 return
 
-    def _set_search_regex(self,
-                          text,
-                          invert,
-                          field,
-                          matcher: Optional[SearchMatcher] = None) -> bool:
+    def set_search_regex(self,
+                         text,
+                         invert,
+                         field,
+                         matcher: Optional[SearchMatcher] = None) -> bool:
         search_matcher = matcher if matcher else self.search_matcher
         _LOG.debug(search_matcher)
 
@@ -239,6 +269,7 @@ class LogView:
         invert=False,
         field: Optional[str] = None,
         search_matcher: Optional[str] = None,
+        interactive: bool = True,
     ) -> bool:
         """Start a new search for the given text."""
         valid_matchers = list(s.name for s in SearchMatcher)
@@ -247,11 +278,32 @@ class LogView:
                 and search_matcher.upper() in valid_matchers):
             selected_matcher = SearchMatcher(search_matcher.upper())
 
-        if self._set_search_regex(text, invert, field, selected_matcher):
-            # Default search direction when hitting enter in the search bar.
-            self.search_backwards()
-            return True
-        return False
+        if not self.set_search_regex(text, invert, field, selected_matcher):
+            return False
+
+        # Clear matched lines
+        self.search_matched_lines = {}
+
+        if interactive:
+            # Start count historical search matches task.
+            self.search_match_count_task = asyncio.create_task(
+                self.count_search_matches())
+
+        # Default search direction when hitting enter in the search bar.
+        if interactive:
+            self.search_forwards()
+        return True
+
+    def save_search_matched_line(self, log_index: int) -> None:
+        """Save the log_index at position as a matched line."""
+        self.search_matched_lines[log_index] = 0
+        # Keep matched lines sorted by position
+        self.search_matched_lines = {
+            # Save this log_index and its match number.
+            log_index: match_number
+            for match_number, log_index in enumerate(
+                sorted(self.search_matched_lines.keys()))
+        }
 
     def disable_search_highlighting(self):
         self.log_pane.log_view.search_highlight = False
@@ -282,10 +334,11 @@ class LogView:
         """Set a filter using the current search_regex."""
         if not self.search_filter:
             return
-        self.search_highlight = False
 
         self.filtering_on = True
         self.filters[self.search_text] = copy.deepcopy(self.search_filter)
+
+        self.clear_search()
 
     def apply_filter(self):
         """Set new filter and schedule historical log filter asyncio task."""
@@ -297,6 +350,7 @@ class LogView:
         self._reset_log_screen_on_next_render = True
 
     def clear_search(self):
+        self.search_matched_lines = {}
         self.search_text = None
         self.search_filter = None
         self.search_highlight = False
@@ -347,6 +401,24 @@ class LogView:
         self._scrollback_start_index = 0
         if not self.follow:
             self.toggle_follow()
+
+    async def count_search_matches(self):
+        """Count search matches and save their locations."""
+        # Wait for any filter_existing_logs_task to finish.
+        if self.filtering_on and self.filter_existing_logs_task:
+            await self.filter_existing_logs_task
+
+        starting_index = self.get_last_log_index()
+        ending_index, logs = self._get_log_lines()
+
+        # From the end of the log store to the beginning.
+        for i in range(starting_index, ending_index - 1, -1):
+            # Is this log a match?
+            if self.search_filter.matches(logs[i]):
+                self.save_search_matched_line(i)
+            # Pause every 100 lines or so
+            if i % 100 == 0:
+                await asyncio.sleep(.1)
 
     async def filter_past_logs(self):
         """Filter past log lines."""
@@ -415,6 +487,8 @@ class LogView:
         """Toggle auto line following."""
         self.follow = not self.follow
         if self.follow:
+            # Disable search match follow mode.
+            self.follow_search_match = False
             self.scroll_to_bottom()
 
     def filter_scan(self, log: 'LogLine'):
@@ -430,7 +504,14 @@ class LogView:
         return False
 
     def new_logs_arrived(self):
-        # If follow is on, scroll to the last line.
+        """Check newly arrived log messages.
+
+        Depending on where log statements occur ``new_logs_arrived`` may be in a
+        separate thread since it is triggerd by the Python log handler
+        ``emit()`` function. In this case the log handler is the LogStore
+        instance ``self.log_store``. This function should not redraw the screen
+        or scroll.
+        """
         latest_total = self.log_store.get_total_count()
 
         if self.filtering_on:
@@ -439,11 +520,24 @@ class LogView:
                 if self.filter_scan(self.log_store.logs[i]):
                     self.filtered_logs.append(self.log_store.logs[i])
 
+        if self.search_filter:
+            last_matched_log: Optional[int] = None
+            # Scan newly arived log lines
+            for i in range(self._last_log_store_index, latest_total):
+                if self.search_filter.matches(self.log_store.logs[i]):
+                    self.save_search_matched_line(i)
+                    last_matched_log = i
+            if last_matched_log and self.follow_search_match:
+                # Set the follow event flag for the next render_content call.
+                self.follow_event = FollowEvent.SEARCH_MATCH
+                self.last_search_matched_log = last_matched_log
+
         self._last_log_store_index = latest_total
         self._new_logs_since_last_render = True
 
         if self.follow:
-            self.scroll_to_bottom()
+            # Set the follow event flag for the next render_content call.
+            self.follow_event = FollowEvent.STICKY_FOLLOW
 
         # Trigger a UI update
         self._update_prompt_toolkit_ui()
@@ -494,14 +588,15 @@ class LogView:
         self.log_screen.shift_selected_log_to_center()
         self._user_scroll_event = True
 
-    def scroll_to_bottom(self):
+    def scroll_to_bottom(self, with_sticky_follow: bool = True):
         """Move selected index to the end."""
         # Don't change following state like scroll_to_top.
         self.log_index = max(0, self.get_last_log_index())
         self.log_screen.reset_logs(log_index=self.log_index)
 
         # Sticky follow mode
-        self.follow = True
+        if with_sticky_follow:
+            self.follow = True
         self._user_scroll_event = True
 
     def scroll(self, lines) -> None:
@@ -529,17 +624,21 @@ class LogView:
                 self.follow = True
 
     def visual_selected_log_count(self) -> int:
-        return len(self.marked_logs)
+        if self.marked_logs_start is None or self.marked_logs_end is None:
+            return 0
+        return (self.marked_logs_end - self.marked_logs_start) + 1
 
     def clear_visual_selection(self) -> None:
-        self.marked_logs = {}
+        self.marked_logs_start = None
+        self.marked_logs_end = None
         self.visual_select_mode = False
         self._user_scroll_event = True
         self.log_pane.application.redraw_ui()
 
     def visual_select_all(self) -> None:
-        for i in range(self._scrollback_start_index, self.get_total_count()):
-            self.marked_logs[i] = 1
+        self.marked_logs_start = self._scrollback_start_index
+        self.marked_logs_end = self.get_total_count() - 1
+
         self.visual_select_mode = True
         self._user_scroll_event = True
         self.log_pane.application.redraw_ui()
@@ -562,7 +661,6 @@ class LogView:
 
     def visual_select_line(self,
                            mouse_position: Point,
-                           deselect: bool = False,
                            autoscroll: bool = True) -> None:
         """Mark the log under mouse_position as visually selected."""
         # Check mouse_position is valid
@@ -576,15 +674,15 @@ class LogView:
         if screen_line.log_index is None:
             return
 
-        # If deselecting
-        if deselect:
-            self.marked_logs[screen_line.log_index] = 0
-            if screen_line.log_index in self.marked_logs:
-                del self.marked_logs[screen_line.log_index]
-        # Selecting
-        else:
-            self.marked_logs[screen_line.log_index] = self.marked_logs.get(
-                screen_line.log_index, 0) + 1
+        if self.marked_logs_start is None:
+            self.marked_logs_start = screen_line.log_index
+        if self.marked_logs_end is None:
+            self.marked_logs_end = screen_line.log_index
+
+        if screen_line.log_index < self.marked_logs_start:
+            self.marked_logs_start = screen_line.log_index
+        elif screen_line.log_index > self.marked_logs_end:
+            self.marked_logs_end = screen_line.log_index
 
         # Update cursor position
         self.log_screen.move_cursor_to_position(mouse_position.y)
@@ -595,10 +693,6 @@ class LogView:
                 self.scroll_up(1)
             elif mouse_position.y == self._window_height - 1:
                 self.scroll_down(1)
-
-        # If no selection left, turn off visual_select_mode flag.
-        if len(self.marked_logs) == 0:
-            self.visual_select_mode = False
 
         # Trigger a rerender.
         self._user_scroll_event = True
@@ -661,6 +755,20 @@ class LogView:
             self.log_screen.resize(self._window_width, self._window_height)
             self._reset_log_screen_on_next_render = True
 
+        if self.follow_event is not None:
+            if (self.follow_event == FollowEvent.SEARCH_MATCH
+                    and self.last_search_matched_log):
+                self.log_index = self.last_search_matched_log
+                self.last_search_matched_log = None
+                self._reset_log_screen_on_next_render = True
+
+            elif self.follow_event == FollowEvent.STICKY_FOLLOW:
+                # Jump to the last log message
+                self.log_index = max(0, self.get_last_log_index())
+
+            self.follow_event = None
+            screen_update_needed = True
+
         if self._reset_log_screen_on_next_render or self.log_screen.empty():
             # Clear the reset flag.
             self._reset_log_screen_on_next_render = False
@@ -698,7 +806,9 @@ class LogView:
 
         if screen_update_needed:
             self._line_fragment_cache = self.log_screen.get_lines(
-                marked_logs=self.marked_logs)
+                marked_logs_start=self.marked_logs_start,
+                marked_logs_end=self.marked_logs_end,
+            )
         return self._line_fragment_cache
 
     def _logs_to_text(
@@ -717,13 +827,15 @@ class LogView:
 
         _start_log_index, log_source = self._get_log_lines()
 
-        log_indexes = (i for i in range(self._scrollback_start_index,
-                                        self.get_total_count()))
-        if selected_lines_only:
-            log_indexes = (i for i in sorted(self.marked_logs.keys()))
+        log_index_range = range(self._scrollback_start_index,
+                                self.get_total_count())
+        if (selected_lines_only and self.marked_logs_start is not None
+                and self.marked_logs_end is not None):
+            log_index_range = range(self.marked_logs_start,
+                                    self.marked_logs_end + 1)
 
         text_output = ''
-        for i in log_indexes:
+        for i in log_index_range:
             log_text = formatter(log_source[i])
             text_output += log_text
             if not log_text.endswith('\n'):

@@ -18,19 +18,34 @@ the command.
 """
 
 import argparse
+import atexit
 from dataclasses import dataclass
 import enum
+import json
 import logging
 import os
 from pathlib import Path
+import platform
 import re
 import shlex
 import subprocess
 import sys
+import time
 from typing import Callable, Dict, Iterable, Iterator, List, NamedTuple
 from typing import Optional, Tuple
 
+try:
+    from pw_build.python_package import load_packages
+except ImportError:
+    # Load from python_package from this directory if pw_build is not available.
+    from python_package import load_packages  # type: ignore
+
+if sys.platform != 'win32':
+    import fcntl  # pylint: disable=import-error
+    # TODO(b/227670947): Support Windows.
+
 _LOG = logging.getLogger(__name__)
+_LOCK_ACQUISITION_TIMEOUT = 30 * 60  # 30 minutes in seconds
 
 
 def _parse_args() -> argparse.Namespace:
@@ -72,10 +87,27 @@ def _parse_args() -> argparse.Namespace:
         help='Change to this working directory before running the subcommand',
     )
     parser.add_argument(
+        '--python-dep-list-files',
+        nargs='+',
+        type=Path,
+        help='Paths to text files containing lists of Python package metadata '
+        'json files.',
+    )
+    parser.add_argument(
+        '--python-virtualenv-config',
+        type=Path,
+        help='Path to a virtualenv json config to use for this action.',
+    )
+    parser.add_argument(
         'original_cmd',
         nargs=argparse.REMAINDER,
         help='Python script with arguments to run',
     )
+    parser.add_argument(
+        '--lockfile',
+        type=Path,
+        help=('Path to a pip lockfile. Any pip execution will acquire an '
+              'exclusive lock on it, any other module a shared lock.'))
     return parser.parse_args()
 
 
@@ -162,6 +194,8 @@ class _Artifact(NamedTuple):
 # Matches a non-phony build statement.
 _GN_NINJA_BUILD_STATEMENT = re.compile(r'^build (.+):[ \n](?!phony\b)')
 
+_OBJECTS_EXTENSIONS = ('.o', )
+
 # Extensions used for compilation artifacts.
 _MAIN_ARTIFACTS = '', '.elf', '.a', '.so', '.dylib', '.exe', '.lib', '.dll'
 
@@ -232,16 +266,16 @@ def _search_target_ninja(ninja_file: Path,
     _LOG.debug('Parsing target Ninja file %s for %s', ninja_file, target)
 
     with ninja_file.open() as fd:
-        for path, variables in _parse_build_artifacts(fd):
+        for path, _ in _parse_build_artifacts(fd):
             # Older GN used .stamp files when there is no build artifact.
             if path.suffix == '.stamp':
                 continue
 
-            if variables:
+            if str(path).endswith(_OBJECTS_EXTENSIONS):
+                objects.append(Path(path))
+            else:
                 assert not artifact, f'Multiple artifacts for {target}!'
                 artifact = Path(path)
-            else:
-                objects.append(Path(path))
 
     return artifact, objects
 
@@ -392,7 +426,7 @@ def _target_objects(paths: GnPaths, expr: _Expression) -> _Actions:
         yield _ArgAction.EMIT_NEW, str(obj)
 
 
-# TODO(pwbug/347): Replace expressions with native GN features when possible.
+# TODO(b/234886742): Replace expressions with native GN features when possible.
 _FUNCTIONS: Dict['str', Callable[[GnPaths, _Expression], _Actions]] = {
     'TARGET_FILE': _target_file,
     'TARGET_FILE_IF_EXISTS': _target_file_if_exists,
@@ -442,7 +476,67 @@ def expand_expressions(paths: GnPaths, arg: str) -> Iterable[str]:
     return (''.join(arg) for arg in expanded_args if arg)
 
 
-def main(
+class LockAcquisitionTimeoutError(Exception):
+    """Raised on a timeout."""
+
+
+def acquire_lock(lockfile: Path, exclusive: bool):
+    """Attempts to acquire the lock.
+
+    Args:
+      lockfile: pathlib.Path to the lock.
+      exclusive: whether this needs to be an exclusive lock.
+
+    Raises:
+      LockAcquisitionTimeoutError: If the lock is not acquired after a
+        reasonable time.
+    """
+    if sys.platform == 'win32':
+        # No-op on Windows, which doesn't have POSIX file locking.
+        # TODO(b/227670947): Get this working on Windows, too.
+        return
+
+    start_time = time.monotonic()
+    if exclusive:
+        lock_type = fcntl.LOCK_EX  # type: ignore[name-defined]
+    else:
+        lock_type = fcntl.LOCK_SH  # type: ignore[name-defined]
+    fd = os.open(lockfile, os.O_RDWR | os.O_CREAT)
+
+    # Make sure we close the file when the process exits. If we manage to
+    # acquire the lock below, closing the file will release it.
+    def cleanup():
+        os.close(fd)
+
+    atexit.register(cleanup)
+
+    backoff = 1
+    while time.monotonic() - start_time < _LOCK_ACQUISITION_TIMEOUT:
+        try:
+            fcntl.flock(  # type: ignore[name-defined]
+                fd, lock_type | fcntl.LOCK_NB)  # type: ignore[name-defined]
+            return  # Lock acquired!
+        except BlockingIOError:
+            pass  # Keep waiting.
+
+        time.sleep(backoff * 0.05)
+        backoff += 1
+
+    raise LockAcquisitionTimeoutError(
+        f"Failed to acquire lock {lockfile} in {_LOCK_ACQUISITION_TIMEOUT}")
+
+
+class MissingPythonDependency(Exception):
+    """An error occurred while processing a Python dependency."""
+
+
+def _load_virtualenv_config(json_file_path: Path) -> Tuple[str, str]:
+    with json_file_path.open() as json_fp:
+        json_dict = json.load(json_fp)
+    return json_dict.get('interpreter'), json_dict.get('path')
+
+
+def main(  # pylint: disable=too-many-arguments,too-many-branches,too-many-locals
     gn_root: Path,
     current_path: Path,
     original_cmd: List[str],
@@ -450,11 +544,37 @@ def main(
     current_toolchain: str,
     module: Optional[str],
     env: Optional[List[str]],
+    python_dep_list_files: List[Path],
+    python_virtualenv_config: Optional[Path],
     capture_output: bool,
     touch: Optional[Path],
     working_directory: Optional[Path],
+    lockfile: Optional[Path],
 ) -> int:
     """Script entry point."""
+
+    python_paths_list = []
+    if python_dep_list_files:
+        py_packages = load_packages(
+            python_dep_list_files,
+            # If this python_action has no gn python_deps this file will be
+            # empty.
+            ignore_missing=True)
+
+        for pkg in py_packages:
+            top_level_source_dir = pkg.package_dir
+            if not top_level_source_dir:
+                raise MissingPythonDependency(
+                    'Unable to find top level source dir for the Python '
+                    f'package "{pkg}"')
+            # Don't add this dir to the PYTHONPATH if no __init__.py exists.
+            init_py_files = top_level_source_dir.parent.glob('*/__init__.py')
+            if not any(init_py_files):
+                continue
+            python_paths_list.append(top_level_source_dir.parent.resolve())
+
+        # Sort the PYTHONPATH list, it will be in a different order each build.
+        python_paths_list = sorted(python_paths_list)
 
     if not original_cmd or original_cmd[0] != '--':
         _LOG.error('%s requires a command to run', sys.argv[0])
@@ -471,15 +591,65 @@ def main(
 
     command = [sys.executable]
 
+    python_interpreter = None
+    python_virtualenv = None
+    if python_virtualenv_config:
+        python_interpreter, python_virtualenv = _load_virtualenv_config(
+            python_virtualenv_config)
+
+    if python_interpreter is not None:
+        command = [str(root_build_dir / python_interpreter)]
+
     if module is not None:
         command += ['-m', module]
 
     run_args: dict = dict()
+    # Always inherit the environtment by default. If PYTHONPATH or VIRTUALENV is
+    # set below then the environment vars must be copied in or subprocess.run
+    # will run with only the new updated variables.
+    run_args['env'] = os.environ.copy()
 
     if env is not None:
         environment = os.environ.copy()
         environment.update((k, v) for k, v in (a.split('=', 1) for a in env))
         run_args['env'] = environment
+
+    script_command = original_cmd[0]
+    if script_command == '--':
+        script_command = original_cmd[1]
+
+    is_pip_command = (module == 'pip'
+                      or 'pip_install_python_deps.py' in script_command)
+
+    existing_env = (run_args['env']
+                    if 'env' in run_args else os.environ.copy())
+    new_env = {}
+    if python_virtualenv:
+        new_env['VIRTUAL_ENV'] = str(root_build_dir / python_virtualenv)
+        bin_folder = 'Scripts' if platform.system() == 'Windows' else 'bin'
+        new_env['PATH'] = os.pathsep.join([
+            str(root_build_dir / python_virtualenv / bin_folder),
+            existing_env.get('PATH', '')
+        ])
+
+    if python_virtualenv and python_paths_list and not is_pip_command:
+        python_path_prepend = os.pathsep.join(
+            str(p) for p in set(python_paths_list))
+
+        # Append the existing PYTHONPATH to the new one.
+        new_python_path = os.pathsep.join(
+            path_str for path_str in
+            [python_path_prepend,
+             existing_env.get('PYTHONPATH', '')] if path_str)
+
+        new_env['PYTHONPATH'] = new_python_path
+        # mypy doesn't use PYTHONPATH for analyzing imports so module
+        # directories must be added to the MYPYPATH environment variable.
+        new_env['MYPYPATH'] = new_python_path
+
+    if 'env' not in run_args:
+        run_args['env'] = {}
+    run_args['env'].update(new_env)
 
     if capture_output:
         # Combine stdout and stderr so that error messages are correctly
@@ -487,6 +657,7 @@ def main(
         run_args['stdout'] = subprocess.PIPE
         run_args['stderr'] = subprocess.STDOUT
 
+    # Build the command to run.
     try:
         for arg in original_cmd[1:]:
             command += expand_expressions(paths, arg)
@@ -496,6 +667,15 @@ def main(
 
     if working_directory:
         run_args['cwd'] = working_directory
+
+    # TODO(b/235239674): Deprecate the --lockfile option as part of the Python
+    # GN template refactor.
+    if lockfile:
+        try:
+            acquire_lock(lockfile, is_pip_command)
+        except LockAcquisitionTimeoutError as exception:
+            _LOG.error('%s', exception)
+            return 1
 
     _LOG.debug('RUN %s', ' '.join(shlex.quote(arg) for arg in command))
 

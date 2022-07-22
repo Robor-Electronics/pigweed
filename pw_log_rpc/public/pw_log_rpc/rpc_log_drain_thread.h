@@ -16,7 +16,6 @@
 
 #include <cstddef>
 #include <optional>
-#include <span>
 
 #include "pw_chrono/system_clock.h"
 #include "pw_log_rpc/log_service.h"
@@ -24,6 +23,7 @@
 #include "pw_multisink/multisink.h"
 #include "pw_result/result.h"
 #include "pw_rpc/raw/server_reader_writer.h"
+#include "pw_span/span.h"
 #include "pw_status/status.h"
 #include "pw_status/try.h"
 #include "pw_sync/timed_thread_notification.h"
@@ -40,19 +40,21 @@ class RpcLogDrainThread : public thread::ThreadCore,
  public:
   RpcLogDrainThread(multisink::MultiSink& multisink,
                     RpcLogDrainMap& drain_map,
-                    std::span<std::byte> encoding_buffer)
+                    span<std::byte> encoding_buffer)
       : drain_map_(drain_map),
         multisink_(multisink),
         encoding_buffer_(encoding_buffer) {}
 
   void OnNewEntryAvailable() override {
-    new_log_available_notification_.release();
+    ready_to_flush_notification_.release();
   }
 
   // Sequentially flushes each log stream.
   void Run() override {
     for (auto& drain : drain_map_.drains()) {
       multisink_.AttachDrain(drain);
+      drain.set_on_open_callback(
+          [this]() { this->ready_to_flush_notification_.release(); });
     }
     multisink_.AttachListener(*this);
 
@@ -61,9 +63,9 @@ class RpcLogDrainThread : public thread::ThreadCore,
         chrono::SystemClock::duration::zero();
     while (true) {
       if (drains_pending && min_delay.has_value()) {
-        new_log_available_notification_.try_acquire_for(min_delay.value());
+        ready_to_flush_notification_.try_acquire_for(min_delay.value());
       } else {
-        new_log_available_notification_.acquire();
+        ready_to_flush_notification_.acquire();
       }
       drains_pending = false;
       min_delay = std::nullopt;
@@ -93,10 +95,10 @@ class RpcLogDrainThread : public thread::ThreadCore,
   }
 
  private:
-  sync::TimedThreadNotification new_log_available_notification_;
+  sync::TimedThreadNotification ready_to_flush_notification_;
   RpcLogDrainMap& drain_map_;
   multisink::MultiSink& multisink_;
-  std::span<std::byte> encoding_buffer_;
+  span<std::byte> encoding_buffer_;
 };
 
 template <size_t kEncodingBufferSizeBytes>

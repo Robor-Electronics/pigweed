@@ -1,4 +1,4 @@
-# Copyright 2021 The Pigweed Authors
+# Copyright 2022 The Pigweed Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not
 # use this file except in compliance with the License. You may obtain a copy of
@@ -22,7 +22,11 @@ import threading
 from typing import Any, Callable, Optional
 
 from pw_status import Status
-from pw_transfer.transfer_pb2 import Chunk
+try:
+    from pw_transfer import transfer_pb2
+except ImportError:
+    # For the bazel build, which puts generated protos in a different location.
+    from pigweed.pw_transfer import transfer_pb2  # type: ignore
 
 _LOG = logging.getLogger(__package__)
 
@@ -87,14 +91,14 @@ class Transfer(abc.ABC):
     messages in response.
     """
     def __init__(self,
-                 transfer_id: int,
-                 send_chunk: Callable[[Chunk], None],
+                 session_id: int,
+                 send_chunk: Callable[[transfer_pb2.Chunk], None],
                  end_transfer: Callable[['Transfer'], None],
                  response_timeout_s: float,
                  initial_response_timeout_s: float,
                  max_retries: int,
                  progress_callback: ProgressCallback = None):
-        self.id = transfer_id
+        self.id = session_id
         self.status = Status.OK
         self.done = threading.Event()
 
@@ -119,10 +123,10 @@ class Transfer(abc.ABC):
         """Returns the data read or written in this transfer."""
 
     @abc.abstractmethod
-    def _initial_chunk(self) -> Chunk:
+    def _initial_chunk(self) -> transfer_pb2.Chunk:
         """Returns the initial chunk to notify the sever of the transfer."""
 
-    async def handle_chunk(self, chunk: Chunk) -> None:
+    async def handle_chunk(self, chunk: transfer_pb2.Chunk) -> None:
         """Processes an incoming chunk from the server.
 
         Handles terminating chunks (i.e. those with a status) and forwards
@@ -145,7 +149,7 @@ class Transfer(abc.ABC):
         self._response_timer.start()
 
     @abc.abstractmethod
-    async def _handle_data_chunk(self, chunk: Chunk) -> None:
+    async def _handle_data_chunk(self, chunk: transfer_pb2.Chunk) -> None:
         """Handles a chunk that contains or requests data."""
 
     @abc.abstractmethod
@@ -196,7 +200,10 @@ class Transfer(abc.ABC):
 
     def _send_error(self, error: Status) -> None:
         """Sends an error chunk to the server and finishes the transfer."""
-        self._send_chunk(Chunk(transfer_id=self.id, status=error.value))
+        self._send_chunk(
+            transfer_pb2.Chunk(transfer_id=self.id,
+                               status=error.value,
+                               type=transfer_pb2.Chunk.Type.COMPLETION))
         self.finish(error)
 
 
@@ -204,16 +211,16 @@ class WriteTransfer(Transfer):
     """A client -> server write transfer."""
     def __init__(
         self,
-        transfer_id: int,
+        session_id: int,
         data: bytes,
-        send_chunk: Callable[[Chunk], None],
+        send_chunk: Callable[[transfer_pb2.Chunk], None],
         end_transfer: Callable[[Transfer], None],
         response_timeout_s: float,
         initial_response_timeout_s: float,
         max_retries: int,
         progress_callback: ProgressCallback = None,
     ):
-        super().__init__(transfer_id, send_chunk, end_transfer,
+        super().__init__(session_id, send_chunk, end_transfer,
                          response_timeout_s, initial_response_timeout_s,
                          max_retries, progress_callback)
         self._data = data
@@ -235,10 +242,14 @@ class WriteTransfer(Transfer):
     def data(self) -> bytes:
         return self._data
 
-    def _initial_chunk(self) -> Chunk:
-        return Chunk(transfer_id=self.id)
+    def _initial_chunk(self) -> transfer_pb2.Chunk:
+        # TODO(frolv): session_id should not be set here, but assigned by the
+        # server during an initial handshake.
+        return transfer_pb2.Chunk(transfer_id=self.id,
+                                  resource_id=self.id,
+                                  type=transfer_pb2.Chunk.Type.START)
 
-    async def _handle_data_chunk(self, chunk: Chunk) -> None:
+    async def _handle_data_chunk(self, chunk: transfer_pb2.Chunk) -> None:
         """Processes an incoming chunk from the server.
 
         In a write transfer, the server only sends transfer parameter updates
@@ -281,12 +292,14 @@ class WriteTransfer(Transfer):
 
         self._last_chunk = write_chunk
 
-    def _handle_parameters_update(self, chunk: Chunk) -> bool:
+    def _handle_parameters_update(self, chunk: transfer_pb2.Chunk) -> bool:
         """Updates transfer state based on a transfer parameters update."""
 
         retransmit = True
         if chunk.HasField('type'):
-            retransmit = chunk.type == Chunk.Type.PARAMETERS_RETRANSMIT
+            retransmit = (chunk.type
+                          == transfer_pb2.Chunk.Type.PARAMETERS_RETRANSMIT
+                          or chunk.type == transfer_pb2.Chunk.Type.START)
 
         if chunk.offset > len(self.data):
             # Bad offset; terminate the transfer.
@@ -320,7 +333,7 @@ class WriteTransfer(Transfer):
                                     len(self.data) - self._offset)
             self._window_end_offset = self._offset + max_bytes_to_send
         else:
-            assert chunk.type == Chunk.Type.PARAMETERS_CONTINUE
+            assert chunk.type == transfer_pb2.Chunk.Type.PARAMETERS_CONTINUE
 
             # Extend the window to the new end offset specified by the server.
             self._window_end_offset = min(chunk.window_end_offset,
@@ -337,9 +350,11 @@ class WriteTransfer(Transfer):
     def _retry_after_timeout(self) -> None:
         self._send_chunk(self._last_chunk)
 
-    def _next_chunk(self) -> Chunk:
+    def _next_chunk(self) -> transfer_pb2.Chunk:
         """Returns the next Chunk message to send in the data transfer."""
-        chunk = Chunk(transfer_id=self.id, offset=self._offset)
+        chunk = transfer_pb2.Chunk(transfer_id=self.id,
+                                   offset=self._offset,
+                                   type=transfer_pb2.Chunk.Type.DATA)
         max_bytes_in_chunk = min(self._max_chunk_size,
                                  self._window_end_offset - self._offset)
 
@@ -371,8 +386,8 @@ class ReadTransfer(Transfer):
 
     def __init__(  # pylint: disable=too-many-arguments
             self,
-            transfer_id: int,
-            send_chunk: Callable[[Chunk], None],
+            session_id: int,
+            send_chunk: Callable[[transfer_pb2.Chunk], None],
             end_transfer: Callable[[Transfer], None],
             response_timeout_s: float,
             initial_response_timeout_s: float,
@@ -381,7 +396,7 @@ class ReadTransfer(Transfer):
             max_chunk_size: int = 1024,
             chunk_delay_us: int = None,
             progress_callback: ProgressCallback = None):
-        super().__init__(transfer_id, send_chunk, end_transfer,
+        super().__init__(session_id, send_chunk, end_transfer,
                          response_timeout_s, initial_response_timeout_s,
                          max_retries, progress_callback)
         self._max_bytes_to_receive = max_bytes_to_receive
@@ -399,10 +414,10 @@ class ReadTransfer(Transfer):
         """Returns an immutable copy of the data that has been read."""
         return bytes(self._data)
 
-    def _initial_chunk(self) -> Chunk:
-        return self._transfer_parameters()
+    def _initial_chunk(self) -> transfer_pb2.Chunk:
+        return self._transfer_parameters(transfer_pb2.Chunk.Type.START)
 
-    async def _handle_data_chunk(self, chunk: Chunk) -> None:
+    async def _handle_data_chunk(self, chunk: transfer_pb2.Chunk) -> None:
         """Processes an incoming chunk from the server.
 
         In a read transfer, the client receives data chunks from the server.
@@ -413,7 +428,9 @@ class ReadTransfer(Transfer):
             # Initially, the transfer service only supports in-order transfers.
             # If data is received out of order, request that the server
             # retransmit from the previous offset.
-            self._send_chunk(self._transfer_parameters())
+            self._send_chunk(
+                self._transfer_parameters(
+                    transfer_pb2.Chunk.Type.PARAMETERS_RETRANSMIT))
             return
 
         self._data += chunk.data
@@ -424,7 +441,10 @@ class ReadTransfer(Transfer):
             if chunk.remaining_bytes == 0:
                 # No more data to read. Acknowledge receipt and finish.
                 self._send_chunk(
-                    Chunk(transfer_id=self.id, status=Status.OK.value))
+                    transfer_pb2.Chunk(
+                        transfer_id=self.id,
+                        status=Status.OK.value,
+                        type=transfer_pb2.Chunk.Type.COMPLETION))
                 self.finish(Status.OK)
                 return
 
@@ -442,6 +462,26 @@ class ReadTransfer(Transfer):
             self._remaining_transfer_size + self._offset)
         self._update_progress(self._offset, self._offset, total_size)
 
+        if chunk.window_end_offset != 0:
+            if chunk.window_end_offset < self._offset:
+                _LOG.error(
+                    'Transfer %d: transmitter sent invalid earlier end offset '
+                    '%d (receiver offset %d)', self.id,
+                    chunk.window_end_offset, self._offset)
+                self._send_error(Status.INTERNAL)
+                return
+
+            if chunk.window_end_offset > self._window_end_offset:
+                _LOG.error(
+                    'Transfer %d: transmitter sent invalid later end offset '
+                    '%d (receiver end offset %d)', self.id,
+                    chunk.window_end_offset, self._window_end_offset)
+                self._send_error(Status.INTERNAL)
+                return
+
+            self._window_end_offset = chunk.window_end_offset
+            self._pending_bytes -= chunk.window_end_offset - self._offset
+
         remaining_window_size = self._window_end_offset - self._offset
         extend_window = (remaining_window_size <= self._max_bytes_to_receive /
                          ReadTransfer.EXTEND_WINDOW_DIVISOR)
@@ -449,28 +489,31 @@ class ReadTransfer(Transfer):
         if self._pending_bytes == 0:
             # All pending data was received. Send out a new parameters chunk for
             # the next block.
-            self._send_chunk(self._transfer_parameters())
+            self._send_chunk(
+                self._transfer_parameters(
+                    transfer_pb2.Chunk.Type.PARAMETERS_RETRANSMIT))
         elif extend_window:
-            self._send_chunk(self._transfer_parameters(extend=True))
+            self._send_chunk(
+                self._transfer_parameters(
+                    transfer_pb2.Chunk.Type.PARAMETERS_CONTINUE))
 
     def _retry_after_timeout(self) -> None:
-        self._send_chunk(self._transfer_parameters())
+        self._send_chunk(
+            self._transfer_parameters(
+                transfer_pb2.Chunk.Type.PARAMETERS_RETRANSMIT))
 
-    def _transfer_parameters(self, extend: bool = False) -> Chunk:
+    def _transfer_parameters(self, chunk_type: Any) -> transfer_pb2.Chunk:
         """Sends an updated transfer parameters chunk to the server."""
 
         self._pending_bytes = self._max_bytes_to_receive
         self._window_end_offset = self._offset + self._max_bytes_to_receive
 
-        chunk_type = (Chunk.Type.PARAMETERS_CONTINUE
-                      if extend else Chunk.Type.PARAMETERS_RETRANSMIT)
-
-        chunk = Chunk(transfer_id=self.id,
-                      pending_bytes=self._pending_bytes,
-                      window_end_offset=self._window_end_offset,
-                      max_chunk_size_bytes=self._max_chunk_size,
-                      offset=self._offset,
-                      type=chunk_type)
+        chunk = transfer_pb2.Chunk(transfer_id=self.id,
+                                   pending_bytes=self._pending_bytes,
+                                   window_end_offset=self._window_end_offset,
+                                   max_chunk_size_bytes=self._max_chunk_size,
+                                   offset=self._offset,
+                                   type=chunk_type)
 
         if self._chunk_delay_us:
             chunk.min_delay_microseconds = self._chunk_delay_us

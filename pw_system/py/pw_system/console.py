@@ -42,6 +42,7 @@ from types import ModuleType
 from typing import (
     Any,
     Collection,
+    Dict,
     Iterable,
     Iterator,
     List,
@@ -57,16 +58,19 @@ import pw_console.python_logging
 from pw_console import PwConsoleEmbed
 from pw_console.pyserial_wrapper import SerialWithLogging
 from pw_console.plugins.bandwidth_toolbar import BandwidthToolbar
-
+from pw_console.log_store import LogStore
 from pw_log.proto import log_pb2
+from pw_metric_proto import metric_service_pb2
 from pw_rpc.console_tools.console import flattened_rpc_completions
+from pw_tokenizer.detokenize import AutoUpdatingDetokenizer
+from pw_unit_test_proto import unit_test_pb2
+
 from pw_system.device import Device
-from pw_tokenizer.database import LoadTokenDatabases
-from pw_tokenizer.detokenize import Detokenizer
-from pw_tokenizer import tokens
 
 _LOG = logging.getLogger('tools')
 _DEVICE_LOG = logging.getLogger('rpc_device')
+_SERIAL_DEBUG = logging.getLogger('pw_console.serial_debug_logger')
+_ROOT_LOG = logging.getLogger()
 
 PW_RPC_MAX_PACKET_SIZE = 256
 SOCKET_SERVER = 'localhost'
@@ -105,13 +109,14 @@ def _parse_args():
     parser.add_argument("--token-databases",
                         metavar='elf_or_token_database',
                         nargs="+",
-                        action=LoadTokenDatabases,
+                        type=Path,
                         help="Path to tokenizer database csv file(s).")
     parser.add_argument('--config-file',
                         type=Path,
                         help='Path to a pw_console yaml config file.')
     parser.add_argument('--proto-globs',
                         nargs='+',
+                        default=[],
                         help='glob pattern for .proto files')
     parser.add_argument('-v',
                         '--verbose',
@@ -126,9 +131,15 @@ def _expand_globs(globs: Iterable[str]) -> Iterator[Path]:
             yield Path(file)
 
 
-def _start_ipython_terminal(device: Device,
-                            serial_debug: bool = False,
-                            config_file_path: Optional[Path] = None) -> None:
+def _start_ipython_terminal(
+    device: Device,
+    device_log_store: LogStore,
+    root_log_store: LogStore,
+    serial_debug_log_store: LogStore,
+    log_file: str,
+    serial_debug: bool = False,
+    config_file_path: Optional[Path] = None,
+) -> None:
     """Starts an interactive IPython terminal with preset variables."""
     local_variables = dict(
         client=device.client,
@@ -156,14 +167,12 @@ def _start_ipython_terminal(device: Device,
     client_info = device.info()
     completions = flattened_rpc_completions([client_info])
 
-    log_windows = {
-        'Device Logs': [_DEVICE_LOG],
-        'Host Logs': [logging.getLogger()],
+    log_windows: Dict[str, Union[List[logging.Logger], LogStore]] = {
+        'Device Logs': device_log_store,
+        'Host Logs': root_log_store,
     }
     if serial_debug:
-        log_windows['Serial Debug'] = [
-            logging.getLogger('pw_console.serial_debug_logger')
-        ]
+        log_windows['Serial Debug'] = serial_debug_log_store
 
     interactive_console = PwConsoleEmbed(
         global_vars=local_variables,
@@ -173,16 +182,16 @@ def _start_ipython_terminal(device: Device,
         help_text=__doc__,
         config_file_path=config_file_path,
     )
-    interactive_console.hide_windows('Host Logs')
     interactive_console.add_sentence_completer(completions)
     if serial_debug:
         interactive_console.add_bottom_toolbar(BandwidthToolbar())
 
     # Setup Python logger propagation
-    interactive_console.setup_python_logging()
-
-    # Don't send device logs to the root logger.
-    _DEVICE_LOG.propagate = False
+    interactive_console.setup_python_logging(
+        # Send any unhandled log messages to the external file.
+        last_resort_filename=log_file,
+        # Don't change propagation for these loggers.
+        loggers_with_no_propagation=[_DEVICE_LOG])
 
     interactive_console.embed()
 
@@ -208,20 +217,36 @@ class SocketClientImpl:
         return self.socket.recv(num_bytes)
 
 
+#pylint: disable=too-many-arguments
 def console(device: str,
             baudrate: int,
             proto_globs: Collection[str],
-            token_databases: Collection[tokens.Database],
+            token_databases: Collection[Path],
             socket_addr: str,
             logfile: str,
             output: Any,
             serial_debug: bool = False,
             config_file: Optional[Path] = None,
-            verbose: bool = False) -> int:
+            verbose: bool = False,
+            compiled_protos: Optional[List[ModuleType]] = None) -> int:
     """Starts an interactive RPC console for HDLC."""
     # argparse.FileType doesn't correctly handle '-' for binary files.
     if output is sys.stdout:
         output = sys.stdout.buffer
+
+    # Don't send device logs to the root logger.
+    _DEVICE_LOG.propagate = False
+    # Create pw_console LogStore handlers. These are the data source for log
+    # messages to be displayed in the UI.
+    device_log_store = LogStore()
+    root_log_store = LogStore()
+    serial_debug_log_store = LogStore()
+    # Attach the LogStores as handlers for each log window we want to show.
+    # This should be done before device initialization to capture early
+    # messages.
+    _DEVICE_LOG.addHandler(device_log_store)
+    _ROOT_LOG.addHandler(root_log_store)
+    _SERIAL_DEBUG.addHandler(serial_debug_log_store)
 
     if not logfile:
         # Create a temp logfile to prevent logs from appearing over stdout. This
@@ -230,23 +255,28 @@ def console(device: str,
 
     log_level = logging.DEBUG if verbose else logging.INFO
     pw_cli.log.install(log_level, True, False, logfile)
-    _DEVICE_LOG.setLevel(log_level)
     _LOG.setLevel(log_level)
+    _DEVICE_LOG.setLevel(log_level)
+    _ROOT_LOG.setLevel(log_level)
+    _SERIAL_DEBUG.setLevel(log_level)
 
     detokenizer = None
     if token_databases:
-        detokenizer = Detokenizer(tokens.Database.merged(*token_databases),
-                                  show_errors=True)
-
-    if not proto_globs:
-        proto_globs = ['**/*.proto']
+        detokenizer = AutoUpdatingDetokenizer(*token_databases)
+        detokenizer.show_errors = True
 
     protos: List[Union[ModuleType, Path]] = list(_expand_globs(proto_globs))
+
+    if compiled_protos is None:
+        compiled_protos = []
 
     # Append compiled log.proto library to avoid include errors when manually
     # provided, and shadowing errors due to ordering when the default global
     # search path is used.
-    protos.append(log_pb2)
+    compiled_protos.append(log_pb2)
+    compiled_protos.append(unit_test_pb2)
+    protos.extend(compiled_protos)
+    protos.append(metric_service_pb2)
 
     if not protos:
         _LOG.critical('No .proto files were found with %s',
@@ -263,7 +293,11 @@ def console(device: str,
 
     timestamp_decoder = None
     if socket_addr is None:
-        serial_device = serial_impl(device, baudrate, timeout=1)
+        serial_device = serial_impl(
+            device,
+            baudrate,
+            timeout=0,  # Non-blocking mode
+        )
         read = lambda: serial_device.read(8192)
         write = serial_device.write
 
@@ -290,12 +324,18 @@ def console(device: str,
                            timestamp_decoder=timestamp_decoder,
                            rpc_timeout_s=5)
 
-    _start_ipython_terminal(device_client, serial_debug, config_file)
+    _start_ipython_terminal(device_client, device_log_store, root_log_store,
+                            serial_debug_log_store, logfile, serial_debug,
+                            config_file)
     return 0
 
 
 def main() -> int:
     return console(**vars(_parse_args()))
+
+
+def main_with_compiled_protos(compiled_protos):
+    return console(**vars(_parse_args()), compiled_protos=compiled_protos)
 
 
 if __name__ == '__main__':

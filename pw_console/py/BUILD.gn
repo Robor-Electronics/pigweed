@@ -25,8 +25,10 @@ pw_python_package("py") {
   sources = [
     "pw_console/__init__.py",
     "pw_console/__main__.py",
+    "pw_console/command_runner.py",
     "pw_console/console_app.py",
     "pw_console/console_prefs.py",
+    "pw_console/docs/__init__.py",
     "pw_console/embed.py",
     "pw_console/filter_toolbar.py",
     "pw_console/get_pw_console_app.py",
@@ -48,6 +50,7 @@ pw_python_package("py") {
     "pw_console/plugins/bandwidth_toolbar.py",
     "pw_console/plugins/calc_pane.py",
     "pw_console/plugins/clock_pane.py",
+    "pw_console/plugins/twenty48_pane.py",
     "pw_console/progress_bar/__init__.py",
     "pw_console/progress_bar/progress_bar_impl.py",
     "pw_console/progress_bar/progress_bar_state.py",
@@ -59,6 +62,7 @@ pw_python_package("py") {
     "pw_console/repl_pane.py",
     "pw_console/search_toolbar.py",
     "pw_console/style.py",
+    "pw_console/templates/__init__.py",
     "pw_console/text_formatting.py",
     "pw_console/widgets/__init__.py",
     "pw_console/widgets/border.py",
@@ -70,8 +74,10 @@ pw_python_package("py") {
     "pw_console/widgets/window_pane_toolbar.py",
     "pw_console/window_list.py",
     "pw_console/window_manager.py",
+    "pw_console/yaml_config_loader_mixin.py",
   ]
   tests = [
+    "command_runner_test.py",
     "console_app_test.py",
     "console_prefs_test.py",
     "help_window_test.py",
@@ -86,9 +92,9 @@ pw_python_package("py") {
   python_deps = [
     "$dir_pw_cli/py",
     "$dir_pw_log_tokenized/py",
-    "$dir_pw_tokenizer/py",
   ]
   inputs = [
+    "pw_console/docs/user_guide.rst",
     "pw_console/templates/keybind_list.jinja",
     "pw_console/templates/repl_output.jinja",
   ]

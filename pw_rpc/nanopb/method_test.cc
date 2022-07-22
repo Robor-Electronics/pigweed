@@ -17,6 +17,7 @@
 #include <array>
 
 #include "gtest/gtest.h"
+#include "pw_containers/algorithm.h"
 #include "pw_rpc/internal/lock.h"
 #include "pw_rpc/internal/method_impl_tester.h"
 #include "pw_rpc/internal/test_utils.h"
@@ -158,9 +159,8 @@ class FakeService : public FakeServiceBase<FakeService> {
 
     if (fail_to_encode_async_unary_response) {
       pw_rpc_test_TestResponse response = pw_rpc_test_TestResponse_init_default;
-      response.repeated_field.funcs.encode = [](pb_ostream_t*,
-                                                const pb_field_iter_t*,
-                                                void* const*) { return false; };
+      response.repeated_field.funcs.encode =
+          [](pb_ostream_t*, const pb_field_t*, void* const*) { return false; };
       ASSERT_EQ(OkStatus(), responder.Finish(response, Status::NotFound()));
     } else {
       ASSERT_EQ(
@@ -291,10 +291,7 @@ TEST(NanopbMethod, ServerWriter_SendsResponse) {
   ASSERT_EQ(OkStatus(), encoded.status());
 
   ConstByteSpan sent_payload = context.output().last_packet().payload();
-  EXPECT_TRUE(std::equal(payload.begin(),
-                         payload.end(),
-                         sent_payload.begin(),
-                         sent_payload.end()));
+  EXPECT_TRUE(pw::containers::Equal(payload, sent_payload));
 }
 
 TEST(NanopbMethod, ServerWriter_WriteWhenClosed_ReturnsFailedPrecondition) {
@@ -337,7 +334,7 @@ TEST(NanopbMethod, ServerStreamingRpc_ResponseEncodingFails_InternalError) {
 
   pw_rpc_test_TestResponse response = pw_rpc_test_TestResponse_init_default;
   response.repeated_field.funcs.encode =
-      [](pb_ostream_t*, const pb_field_iter_t*, void* const*) { return false; };
+      [](pb_ostream_t*, const pb_field_t*, void* const*) { return false; };
   EXPECT_EQ(Status::Internal(), context.service().last_writer.Write(response));
 }
 
@@ -380,10 +377,7 @@ TEST(NanopbMethod, ServerReaderWriter_WritesResponses) {
   ASSERT_EQ(OkStatus(), encoded.status());
 
   ConstByteSpan sent_payload = context.output().last_packet().payload();
-  EXPECT_TRUE(std::equal(payload.begin(),
-                         payload.end(),
-                         sent_payload.begin(),
-                         sent_payload.end()));
+  EXPECT_TRUE(pw::containers::Equal(payload, sent_payload));
 }
 
 TEST(NanopbMethod, ServerReaderWriter_HandlesRequests) {

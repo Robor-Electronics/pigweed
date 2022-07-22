@@ -22,7 +22,7 @@ namespace pw::bytes {
 inline constexpr unsigned long long int kBytesInKibibyte = 1ull << 10;
 
 // Mebibytes (MiB): 1024^2 or 2^20
-inline constexpr unsigned long long int kBytesInMibibyte = 1ull << 20;
+inline constexpr unsigned long long int kBytesInMebibyte = 1ull << 20;
 
 // Gibibytes (GiB): 1024^3 or 2^30
 inline constexpr unsigned long long int kBytesInGibibyte = 1ull << 30;
@@ -36,15 +36,51 @@ inline constexpr unsigned long long int kBytesInPebibyte = 1ull << 50;
 // Exbibytes (EiB): 1024^6 or 2^60
 inline constexpr unsigned long long int kBytesInExbibyte = 1ull << 60;
 
+// Functions for specifying a number of bytes in powers of two, as defined by
+// IEC 60027-2 A.2 and ISO/IEC 80000:13-2008.
+//
+// These are useful in headers when using user-defined literals are disallowed.
+//
+//   #include "pw_bytes/units.h"
+//
+//   constexpr size_t kBufferSizeBytes = pw::bytes::MiB(1) + pw::bytes::KiB(42);
+constexpr unsigned long long int B(unsigned long long int bytes) {
+  return bytes;
+}
+
+constexpr unsigned long long int KiB(unsigned long long int kibibytes) {
+  return kibibytes * kBytesInKibibyte;
+}
+
+constexpr unsigned long long int MiB(unsigned long long int mebibytes) {
+  return mebibytes * kBytesInMebibyte;
+}
+
+constexpr unsigned long long int GiB(unsigned long long int gibibytes) {
+  return gibibytes * kBytesInGibibyte;
+}
+
+constexpr unsigned long long int TiB(unsigned long long int tebibytes) {
+  return tebibytes * kBytesInTebibyte;
+}
+
+constexpr unsigned long long int PiB(unsigned long long int pebibytes) {
+  return pebibytes * kBytesInPebibyte;
+}
+
+constexpr unsigned long long int EiB(unsigned long long int exbibytes) {
+  return exbibytes * kBytesInExbibyte;
+}
+
 namespace unit_literals {
 
-// Helper user-defined literals for specifying a number of bytes in powers of
-// two, as defined by IEC 60027-2 A.2 and ISO/IEC 80000:13-2008.
+// User-defined literals for specifying a number of bytes in powers of two, as
+// defined by IEC 60027-2 A.2 and ISO/IEC 80000:13-2008.
 //
 // The supported prefixes include:
 // _B   for bytes     (1024^0)
 // _KiB for kibibytes (1024^1)
-// _MiB for mibibytes (1024^2)
+// _MiB for mebibytes (1024^2)
 // _GiB for gibibytes (1024^3)
 // _TiB for tebibytes (1024^4)
 // _PiB for pebibytes (1024^5)
@@ -67,8 +103,8 @@ constexpr unsigned long long int operator""_KiB(
 }
 
 constexpr unsigned long long int operator""_MiB(
-    unsigned long long int mibibytes) {
-  return mibibytes * kBytesInMibibyte;
+    unsigned long long int mebibytes) {
+  return mebibytes * kBytesInMebibyte;
 }
 
 constexpr unsigned long long int operator""_GiB(

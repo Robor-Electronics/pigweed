@@ -1,4 +1,4 @@
-# Copyright 2020 The Pigweed Authors
+# Copyright 2022 The Pigweed Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not
 # use this file except in compliance with the License. You may obtain a copy of
@@ -24,6 +24,7 @@ import("$dir_pw_third_party/nanopb/nanopb.gni")
 import("$dir_pw_thread/backend.gni")
 import("$dir_pw_toolchain/host_clang/toolchains.gni")
 import("$dir_pw_toolchain/host_gcc/toolchains.gni")
+import("$dir_pw_toolchain/traits.gni")
 import("$dir_pw_trace/backend.gni")
 import("$dir_pw_trace_tokenized/config.gni")
 
@@ -33,10 +34,13 @@ _host_common = {
 
   # Configure backend for assert facade.
   pw_assert_BACKEND = "$dir_pw_assert_basic"
-  pw_assert_LITE_BACKEND = "$dir_pw_assert:print_and_abort"
+  pw_assert_LITE_BACKEND = "$dir_pw_assert:print_and_abort_assert_backend"
 
   # Configure backend for logging facade.
   pw_log_BACKEND = "$dir_pw_log_basic"
+
+  # Enable decimal expansion when converting floats to string.
+  pw_string_CONFIG = "$dir_pw_string:enable_decimal_float_expansion"
 
   # Configure backends for pw_sync's facades.
   pw_sync_INTERRUPT_SPIN_LOCK_BACKEND = "$dir_pw_sync_stl:interrupt_spin_lock"
@@ -44,6 +48,7 @@ _host_common = {
   pw_sync_COUNTING_SEMAPHORE_BACKEND =
       "$dir_pw_sync_stl:counting_semaphore_backend"
   pw_sync_MUTEX_BACKEND = "$dir_pw_sync_stl:mutex_backend"
+  pw_sync_RECURSIVE_MUTEX_BACKEND = "$dir_pw_sync_stl:recursive_mutex_backend"
   pw_sync_TIMED_MUTEX_BACKEND = "$dir_pw_sync_stl:timed_mutex_backend"
   pw_sync_THREAD_NOTIFICATION_BACKEND =
       "$dir_pw_sync:binary_semaphore_thread_notification_backend"
@@ -55,7 +60,6 @@ _host_common = {
 
   # Configure backend for pw_rpc_system_server.
   pw_rpc_system_server_BACKEND = "$dir_pigweed/targets/host:system_rpc_server"
-  pw_rpc_CONFIG = "$dir_pw_rpc:use_global_mutex"
 
   # Configure backend for trace facade.
   pw_trace_BACKEND = "$dir_pw_trace_tokenized"
@@ -118,17 +122,22 @@ _clang_default_configs = [
   "$dir_pw_build:extra_strict_warnings",
   "$dir_pw_build:clang_thread_safety_warnings",
 ]
+_internal_clang_default_configs =
+    _clang_default_configs + [ "$dir_pw_build:internal_strict_warnings" ]
+
 _gcc_default_configs = [
   "$dir_pw_build:extra_strict_warnings",
   "$dir_pw_toolchain/host_gcc:threading_support",
 ]
+_internal_gcc_default_configs =
+    _gcc_default_configs + [ "$dir_pw_build:internal_strict_warnings" ]
+
+_excluded_members = [
+  "defaults",
+  "name",
+]
 
 pw_target_toolchain_host = {
-  _excluded_members = [
-    "defaults",
-    "name",
-  ]
-
   clang_debug = {
     name = "host_clang_debug"
     _toolchain_base = pw_toolchain_host_clang.debug
@@ -290,4 +299,122 @@ pw_target_toolchain_host_list = [
   pw_target_toolchain_host.gcc_debug,
   pw_target_toolchain_host.gcc_speed_optimized,
   pw_target_toolchain_host.gcc_size_optimized,
+]
+
+# Additional configuration intended only for upstream Pigweed use.
+_pigweed_internal = {
+  pw_status_CONFIG = "$dir_pw_status:check_if_used"
+}
+
+# Host toolchains exclusively for upstream Pigweed use. To give upstream Pigweed
+# flexibility in how it compiles code, these toolchains may not be used by
+# downstream projects.
+pw_internal_host_toolchains = [
+  {
+    name = "pw_strict_host_clang_debug"
+    _toolchain_base = pw_toolchain_host_clang.debug
+    forward_variables_from(_toolchain_base, "*", _excluded_members)
+    defaults = {
+      forward_variables_from(_toolchain_base.defaults, "*")
+      forward_variables_from(_host_common, "*")
+      forward_variables_from(_pigweed_internal, "*")
+      forward_variables_from(_os_specific_config, "*")
+      default_configs += _internal_clang_default_configs
+    }
+  },
+  {
+    name = "pw_strict_host_clang_speed_optimized"
+    _toolchain_base = pw_toolchain_host_clang.speed_optimized
+    forward_variables_from(_toolchain_base, "*", _excluded_members)
+    defaults = {
+      forward_variables_from(_toolchain_base.defaults, "*")
+      forward_variables_from(_host_common, "*")
+      forward_variables_from(_pigweed_internal, "*")
+      forward_variables_from(_os_specific_config, "*")
+      default_configs += _internal_clang_default_configs
+    }
+  },
+  {
+    name = "pw_strict_host_clang_size_optimized"
+    _toolchain_base = pw_toolchain_host_clang.size_optimized
+    forward_variables_from(_toolchain_base, "*", _excluded_members)
+    defaults = {
+      forward_variables_from(_toolchain_base.defaults, "*")
+      forward_variables_from(_host_common, "*")
+      forward_variables_from(_pigweed_internal, "*")
+      forward_variables_from(_os_specific_config, "*")
+      default_configs += _internal_clang_default_configs
+    }
+  },
+  {
+    name = "pw_strict_host_gcc_debug"
+    _toolchain_base = pw_toolchain_host_gcc.debug
+    forward_variables_from(_toolchain_base, "*", _excluded_members)
+    defaults = {
+      forward_variables_from(_toolchain_base.defaults, "*")
+      forward_variables_from(_host_common, "*")
+      forward_variables_from(_pigweed_internal, "*")
+      forward_variables_from(_os_specific_config, "*")
+      default_configs += _internal_gcc_default_configs
+    }
+  },
+  {
+    name = "pw_strict_host_gcc_speed_optimized"
+    _toolchain_base = pw_toolchain_host_gcc.speed_optimized
+    forward_variables_from(_toolchain_base, "*", _excluded_members)
+    defaults = {
+      forward_variables_from(_toolchain_base.defaults, "*")
+      forward_variables_from(_host_common, "*")
+      forward_variables_from(_pigweed_internal, "*")
+      forward_variables_from(_os_specific_config, "*")
+      default_configs += _internal_gcc_default_configs
+    }
+  },
+  {
+    name = "pw_strict_host_gcc_size_optimized"
+    _toolchain_base = pw_toolchain_host_gcc.size_optimized
+    forward_variables_from(_toolchain_base, "*", _excluded_members)
+    defaults = {
+      forward_variables_from(_toolchain_base.defaults, "*")
+      forward_variables_from(_host_common, "*")
+      forward_variables_from(_pigweed_internal, "*")
+      forward_variables_from(_os_specific_config, "*")
+      default_configs += _internal_gcc_default_configs
+    }
+  },
+  {
+    name = "pw_strict_host_clang_debug_cpp14"
+    _toolchain_base = pw_toolchain_host_clang.debug
+    forward_variables_from(_toolchain_base, "*", _excluded_members)
+    defaults = {
+      forward_variables_from(_toolchain_base.defaults, "*")
+      forward_variables_from(_host_common, "*")
+      forward_variables_from(_pigweed_internal, "*")
+      forward_variables_from(_os_specific_config, "*")
+      default_configs += _internal_clang_default_configs
+
+      # Set the C++ standard to C++14 instead of the default (C++17).
+      pw_toolchain_CXX_STANDARD = pw_toolchain_STANDARD.CXX14
+
+      # Select C++14-compatible backends.
+      pw_assert_BACKEND = "$dir_pw_assert:print_and_abort_check_backend"
+      pw_log_BACKEND = "$dir_pw_log_null"
+      pw_unit_test_MAIN = "$dir_pw_unit_test:printf_main"
+    }
+  },
+  {
+    name = "pw_strict_host_clang_size_optimized_cpp20"
+    _toolchain_base = pw_toolchain_host_clang.size_optimized
+    forward_variables_from(_toolchain_base, "*", _excluded_members)
+    defaults = {
+      forward_variables_from(_toolchain_base.defaults, "*")
+      forward_variables_from(_host_common, "*")
+      forward_variables_from(_pigweed_internal, "*")
+      forward_variables_from(_os_specific_config, "*")
+      default_configs += _internal_clang_default_configs
+
+      # Set the C++ standard to C++20 instead of the default.
+      pw_toolchain_CXX_STANDARD = pw_toolchain_STANDARD.CXX20
+    }
+  },
 ]

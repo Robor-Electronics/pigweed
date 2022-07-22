@@ -14,11 +14,11 @@
 
 package dev.pigweed.pw_rpc;
 
-// import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.AbstractFuture;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.MessageLite;
+import dev.pigweed.pw_log.Logger;
 import dev.pigweed.pw_rpc.Call.ClientStreaming;
 import java.util.function.Consumer;
 import javax.annotation.Nullable;
@@ -35,8 +35,7 @@ import javax.annotation.Nullable;
  */
 class StreamObserverCall<RequestT extends MessageLite, ResponseT extends MessageLite>
     implements ClientStreaming<RequestT> {
-  // TODO(pwbug/611): Restore logging without a mandatory Flogger dependency.
-  // private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+  private static final Logger logger = Logger.forClass(StreamObserverCall.class);
 
   private final RpcManager rpcs;
   private final PendingRpc rpc;
@@ -67,18 +66,23 @@ class StreamObserverCall<RequestT extends MessageLite, ResponseT extends Message
 
     @Override
     public boolean cancel(boolean mayInterruptIfRunning) {
-      boolean result = super.cancel(mayInterruptIfRunning);
       try {
         call.cancel();
       } catch (ChannelOutputException e) {
         setException(e);
       }
-      return result;
+      return super.cancel(mayInterruptIfRunning);
     }
 
     @Override
-    public void cancel() throws ChannelOutputException {
-      cancel(true);
+    public void cancel() {
+      cancel(false);
+    }
+
+    @Override
+    public void abandon() {
+      call.abandon();
+      super.cancel(false);
     }
 
     @Nullable
@@ -176,12 +180,10 @@ class StreamObserverCall<RequestT extends MessageLite, ResponseT extends Message
 
   /** Invokes the specified RPC, ignoring errors that occur when the RPC is invoked. */
   static <RequestT extends MessageLite, ResponseT extends MessageLite>
-      StreamObserverCall<RequestT, ResponseT> open(RpcManager rpcs,
-          PendingRpc rpc,
-          StreamObserver<ResponseT> observer,
-          @Nullable MessageLite request) {
+      StreamObserverCall<RequestT, ResponseT> open(
+          RpcManager rpcs, PendingRpc rpc, StreamObserver<ResponseT> observer) {
     StreamObserverCall<RequestT, ResponseT> call = new StreamObserverCall<>(rpcs, rpc, observer);
-    rpcs.open(rpc, call, request);
+    rpcs.open(rpc, call);
     return call;
   }
 
@@ -196,6 +198,14 @@ class StreamObserverCall<RequestT extends MessageLite, ResponseT extends Message
     if (active()) {
       error = Status.CANCELLED;
       rpcs.cancel(rpc);
+    }
+  }
+
+  @Override
+  public void abandon() {
+    if (active()) {
+      error = Status.CANCELLED;
+      rpcs.abandon(rpc);
     }
   }
 
@@ -258,8 +268,8 @@ class StreamObserverCall<RequestT extends MessageLite, ResponseT extends Message
     try {
       return (ResponseT) rpc.method().decodeResponsePayload(payload);
     } catch (InvalidProtocolBufferException e) {
-      // logger.atWarning().withCause(e).log(
-      //    "Failed to decode response for method %s; skipping packet", rpc.method().name());
+      logger.atWarning().withCause(e).log(
+          "Failed to decode response for method %s; skipping packet", rpc.method().name());
       return null;
     }
   }

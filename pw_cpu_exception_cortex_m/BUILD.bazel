@@ -85,6 +85,8 @@ pw_cc_library(
 proto_library(
     name = "cpu_state_protos",
     srcs = ["pw_cpu_exception_cortex_m_protos/cpu_state.proto"],
+    import_prefix = "pw_cpu_exception_cortex_m_protos",
+    strip_import_prefix = "//pw_cpu_exception_cortex_m/pw_cpu_exception_cortex_m_protos",
 )
 
 pw_cc_library(
@@ -101,6 +103,7 @@ pw_cc_library(
         ":cortex_m_constants",
         ":proto_dump",
         ":support",
+        ":util",
         # TODO(pwbug/101): Need to add support for facades/backends to Bazel.
         "//pw_cpu_exception",
         "//pw_preprocessor",
@@ -118,6 +121,7 @@ pw_cc_library(
         ":cpu_state",
         ":cpu_state_protos",
         ":proto_dump",
+        ":util",
         "//pw_log",
         "//pw_protobuf",
         "//pw_status",
@@ -141,5 +145,16 @@ pw_cc_test(
     deps = [
         ":cpu_exception",
         ":cpu_state",
+    ],
+)
+
+pw_cc_test(
+    name = "util_test",
+    srcs = [
+        "util_test.cc",
+    ],
+    deps = [
+        ":cpu_state",
+        ":util",
     ],
 )

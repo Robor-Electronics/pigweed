@@ -51,6 +51,8 @@ namespace unit_test {
 enum class TestResult {
   kSuccess = 0,
   kFailure = 1,
+  // Test skipped at runtime. This is neither a success nor a failure.
+  kSkipped = 2,
 };
 
 struct TestCase {
@@ -120,10 +122,6 @@ class EventHandler {
   virtual void TestCaseExpect(const TestCase& test_case,
                               const TestExpectation& expectation) = 0;
 };
-
-// Sets the event handler for a test run. Must be called before RUN_ALL_TESTS()
-// to receive test output.
-void RegisterEventHandler(EventHandler* event_handler);
 
 }  // namespace unit_test
 }  // namespace pw

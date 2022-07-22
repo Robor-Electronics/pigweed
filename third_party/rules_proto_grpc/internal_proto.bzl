@@ -96,6 +96,21 @@ pwpb_compile = _proto_compiler_rule(
     pwpb_compile_aspect,
 )
 
+pwpb_rpc_compile_aspect = _proto_compiler_aspect(
+    [
+        Label("@pigweed//pw_rpc:pw_cc_plugin_pwpb_rpc"),
+        Label("@pigweed//pw_protobuf:pw_cc_plugin"),
+    ],
+    "pwpb_rpc_proto_compile_aspect",
+)
+pwpb_rpc_compile = _proto_compiler_rule(
+    [
+        Label("@pigweed//pw_rpc:pw_cc_plugin_pwpb_rpc"),
+        Label("@pigweed//pw_protobuf:pw_cc_plugin"),
+    ],
+    pwpb_rpc_compile_aspect,
+)
+
 raw_rpc_compile_aspect = _proto_compiler_aspect(
     [Label("@pigweed//pw_rpc:pw_cc_plugin_raw")],
     "raw_rpc_proto_compile_aspect",
@@ -155,6 +170,17 @@ PLUGIN_INFO = {
         "has_srcs": False,
         "additional_tags": [],
     },
+    "pwpb_rpc": {
+        "compiler": pwpb_rpc_compile,
+        "deps": [
+            "@pigweed//pw_protobuf",
+            "@pigweed//pw_rpc/pwpb:server_api",
+            "@pigweed//pw_rpc/pwpb:client_api",
+            "@pigweed//pw_rpc",
+        ],
+        "has_srcs": False,
+        "additional_tags": [],
+    },
     "raw_rpc": {
         "compiler": raw_rpc_compile,
         "deps": [
@@ -211,7 +237,6 @@ def pw_proto_library(name, **kwargs):  # buildifier: disable=function-docstring
             defines = kwargs.get("defines", []),
             srcs = [name_pb + "_srcs"] if info["has_srcs"] else [],
             deps = info["deps"],
-            include_prefix = kwargs.get("include_prefix", ""),
             linkopts = kwargs.get("linkopts", []),
             linkstatic = kwargs.get("linkstatic", True),
             local_defines = kwargs.get("local_defines", []),

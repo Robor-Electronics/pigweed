@@ -38,7 +38,6 @@ pw_cc_library(
         "//pw_assert",
         "//pw_bytes",
         "//pw_polyfill",
-        "//pw_polyfill:iterator",
         "//pw_result",
         "//pw_span",
         "//pw_status",
@@ -69,7 +68,10 @@ pw_cc_library(
     name = "std_file_stream",
     srcs = ["std_file_stream.cc"],
     hdrs = ["public/pw_stream/std_file_stream.h"],
-    deps = [":pw_stream"],
+    deps = [
+        ":pw_stream",
+        "//pw_assert",
+    ],
 )
 
 pw_cc_library(
@@ -86,6 +88,22 @@ pw_cc_test(
         ":pw_stream",
         "//pw_assert",
         "//pw_status",
+        "//pw_unit_test",
+    ],
+)
+
+pw_cc_test(
+    name = "std_file_stream_test",
+    srcs = ["std_file_stream_test.cc"],
+    deps = [
+        ":std_file_stream",
+        "//pw_assert",
+        "//pw_bytes",
+        "//pw_containers",
+        "//pw_random",
+        "//pw_result",
+        "//pw_status",
+        "//pw_string",
         "//pw_unit_test",
     ],
 )

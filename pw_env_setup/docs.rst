@@ -218,8 +218,12 @@ here.
 
 ``cipd_package_files``
   CIPD package file. JSON file consisting of a list of additional CIPD package
-  files to import and a list of dictionaries with "path", "platforms", and
-  "tags" keys. Both top-level lists are optional. An example is below.
+  files to import and a list of dictionaries with "path", "platforms", "subdir",
+  "tags", and "version_file" keys. Both top-level lists are optional. An
+  example is below. Only "path", "platforms", and "tags" are required. If
+  "version_file" is specified then ``pw doctor`` will fail if that version file
+  is not present. If "subdir" is specified then this packages will be installed
+  in a subdirectory of the directory created for packages in this file.
 
 .. code-block:: json
 
@@ -236,9 +240,11 @@ here.
             "mac-amd64",
             "windows-amd64"
         ],
+        "subdir": "pa/th",
         "tags": [
           "version:2@1.16.3"
-        ]
+        ],
+        "version_file": ".versions/go.cipd_version"
       }
     ]
   }
@@ -256,6 +262,19 @@ here.
   only installing Pigweed Python packages, use the location of the Pigweed
   submodule.
 
+``virtualenv.requirements``
+  A list of Python Pip requirements files for installing into the Pigweed
+  virtualenv. Each file will be passed as additional ``--requirement`` argument
+  to a single ```pip install`` at the beginning of bootstrap's ``Python
+  environment`` setup stage. See the `Requirements Files documentation`_ for
+  details on what can be specified using requirements files.
+
+``virtualenv.constraints``
+  A list of Python Pip constraints files. These constraints will be passed to
+  every ``pip`` invocation as an additional ``--constraint`` argument during
+  bootstrap.  virtualenv. See the `Constraints Files documentation`_ for details
+  on formatting.
+
 ``virtualenv.system_packages``
   A boolean value that can be used the give the Python virtual environment
   access to the system site packages. Defaults to ``false``.
@@ -272,6 +291,21 @@ here.
 ``pw_packages``
   A list of packages to install using :ref:`pw_package <module-pw_package>`
   after the rest of bootstrap completes.
+
+``gni_file``
+  Location to write a ``.gni`` file containing paths to many things within the
+  environment directory. Defaults to
+  ``build_overrides/pigweed_environment.gni``.
+
+``json_file``
+  Location to write a ``.json`` file containing step-by-step modifications to
+  the environment, for reading by tools that don't inherit an environment from
+  a sourced ``bootstrap.sh``.
+
+``rosetta``
+  Whether to use Rosetta to use amd64 packages on arm64 Macs. Accepted values
+  are  ``never``, ``allow``, and ``force``. For now, ``allow`` means ``force``.
+  At some point in the future ``allow`` will be changed to mean ``never``.
 
 An example of a config file is below.
 
@@ -295,7 +329,10 @@ An example of a config file is below.
     "optional_submodules": [
       "optional/submodule/one",
       "optional/submodule/two"
-    ]
+    ],
+    "gni_file": "tools/environment.gni",
+    "json_file": "tools/environment.json",
+    "rosetta": "allow"
   }
 
 In case the CIPD packages need to be referenced from other scripts, variables
@@ -308,6 +345,11 @@ set the following environment variables.
  - ``PW_LUCI_CIPD_INSTALL_DIR``
  - ``PW_MYPROJECTNAME_CIPD_INSTALL_DIR``
  - ``PW_PIGWEED_CIPD_INSTALL_DIR``
+
+These directories are also referenced in the gni_file specified by the
+environment config file as ``dir_cipd_${BASENAME}``. This allows the GN build to
+reliably reference these directories without using GN ``getenv()`` calls or
+hardcoding paths.
 
 In addition, ``PW_${BASENAME}_CIPD_INSTALL_DIR`` and
 ``PW_${BASENAME}_CIPD_INSTALL_DIR/bin`` are both added to ``PATH`` for each
@@ -357,6 +399,8 @@ again, and run ``pw presubmit``.
 
 Environment Variables
 *********************
+Input Variables
+---------------
 The following environment variables affect env setup behavior. Most users will
 never need to set these.
 
@@ -402,6 +446,8 @@ never need to set these.
   The absolute path to the Pigweed repository within ``PW_PROJECT_ROOT``. This
   should be set by the project's bootstrap script.
 
+Output Variables
+----------------
 The following environment variables are set by env setup.
 
 ``PATH``
@@ -429,9 +475,9 @@ Non-Shell Environments
 **********************
 If using this outside of bash—for example directly from an IDE or CI
 system—users can process the ``actions.json`` file that's generated in the
-environment directory. It lists variables to set, clear, and modify. An
-example ``actions.json`` is shown below. The "append" and "prepend" actions
-are listed in the order they should be applied, so the
+location specified by the environment config. It lists variables to set, clear,
+and modify. An example ``actions.json`` is shown below. The "append" and
+"prepend" actions are listed in the order they should be applied, so the
 ``<pigweed-root>/out/host/host_tools`` entry should be at the beginning of
 ``PATH`` and not in the middle somewhere.
 
@@ -458,7 +504,7 @@ are listed in the order they should be applied, so the
           "PW_ROOT": "<pigweed-root>",
           "_PW_ACTUAL_ENVIRONMENT_ROOT": "<pigweed-root>/.environment",
           "PW_CIPD_INSTALL_DIR": "<pigweed-root>/.environment/cipd",
-          "CIPD_CACHE_DIR": "/usr/local/google/home/mohrr/.cipd-cache-dir",
+          "CIPD_CACHE_DIR": "<home>/.cipd-cache-dir",
           "PW_PIGWEED_CIPD_INSTALL_DIR": "<pigweed-root>/.environment/cipd/pigweed",
           "PW_LUCI_CIPD_INSTALL_DIR": "<pigweed-root>/.environment/cipd/luci",
           "VIRTUAL_ENV": "<pigweed-root>/.environment/pigweed-venv",
@@ -466,6 +512,25 @@ are listed in the order they should be applied, so the
           "__PYVENV_LAUNCHER__": null
       }
   }
+
+Many of these variables are directly exposed to the GN build as well, through
+the GNI file specified in the environment config file.
+
+.. code-block::
+
+  declare_args() {
+    dir_cipd_pigweed = "<pigweed-root>/.environment/cipd/packages/pigweed"
+    dir_cipd_luci = "<pigweed-root>/.environment/cipd/packages/luci"
+    dir_virtual_env = "<pigweed-root>/.environment/pigweed-venv"
+  }
+
+It's straightforward to use these variables.
+
+.. code-block:: cpp
+
+    import("//build_overrides/pigweed_environment.gni")
+
+    deps = [ "$dir_cipd_pigweed/..." ]
 
 Implementation
 **************
@@ -482,3 +547,6 @@ high-level commands to system-specific initialization files is shown below.
 .. image:: doc_resources/pw_env_setup_output.png
    :alt: Mapping of high-level commands to system-specific commands.
    :align: left
+
+.. _Requirements Files documentation: https://pip.pypa.io/en/stable/user_guide/#requirements-files
+.. _Constraints Files documentation: https://pip.pypa.io/en/stable/user_guide/#constraints-files

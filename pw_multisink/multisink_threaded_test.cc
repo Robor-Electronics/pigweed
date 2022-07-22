@@ -12,12 +12,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+#include <cstddef>
 #include <cstdint>
 
 #include "gtest/gtest.h"
 #include "pw_containers/vector.h"
 #include "pw_multisink/multisink.h"
 #include "pw_multisink/test_thread.h"
+#include "pw_span/span.h"
 #include "pw_string/string_builder.h"
 #include "pw_thread/thread.h"
 #include "pw_thread/yield.h"
@@ -28,7 +30,7 @@ constexpr size_t kEntryBufferSize = sizeof("message 000");
 constexpr size_t kMaxMessageCount = 250;
 constexpr size_t kBufferSize = kMaxMessageCount * kEntryBufferSize;
 
-using MessageSpan = std::span<const StringBuffer<kEntryBufferSize>>;
+using MessageSpan = span<const StringBuffer<kEntryBufferSize>>;
 
 void CompareSentAndReceivedMessages(const MessageSpan& sent_messages,
                                     const MessageSpan& received_messages) {
@@ -93,14 +95,15 @@ class LogPopReaderThread : public thread::ThreadCore {
   void Run() override {
     multisink_.AttachDrain(drain_);
     ReadAllEntries();
-  };
+  }
 
   virtual void ReadAllEntries() {
     do {
       uint32_t drop_count = 0;
+      uint32_t ingress_drop_count = 0;
       const Result<ConstByteSpan> possible_entry =
-          drain_.PopEntry(entry_buffer_, drop_count);
-      total_drop_count_ += drop_count;
+          drain_.PopEntry(entry_buffer_, drop_count, ingress_drop_count);
+      total_drop_count_ += drop_count + ingress_drop_count;
       if (possible_entry.status().IsOutOfRange()) {
         pw::this_thread::yield();
         continue;
@@ -133,12 +136,13 @@ class LogPeekAndCommitReaderThread : public LogPopReaderThread {
                                uint32_t expected_message_and_drop_count)
       : LogPopReaderThread(multisink, expected_message_and_drop_count) {}
 
-  virtual void ReadAllEntries() {
+  void ReadAllEntries() override {
     do {
       uint32_t drop_count = 0;
+      uint32_t ingress_drop_count = 0;
       const Result<MultiSink::Drain::PeekedEntry> possible_entry =
-          drain_.PeekEntry(entry_buffer_, drop_count);
-      total_drop_count_ += drop_count;
+          drain_.PeekEntry(entry_buffer_, drop_count, ingress_drop_count);
+      total_drop_count_ += drop_count + ingress_drop_count;
       if (possible_entry.status().IsOutOfRange()) {
         pw::this_thread::yield();
         continue;
@@ -167,11 +171,10 @@ class LogWriterThread : public thread::ThreadCore {
 
   void Run() override {
     for (const auto& message : message_stack_) {
-      multisink_.HandleEntry(
-          std::as_bytes(std::span(std::string_view(message))));
+      multisink_.HandleEntry(as_bytes(span(std::string_view(message))));
       pw::this_thread::yield();
     }
-  };
+  }
 
  private:
   MultiSink& multisink_;

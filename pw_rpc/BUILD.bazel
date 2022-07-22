@@ -89,6 +89,7 @@ pw_cc_library(
         "public/pw_rpc/internal/method_union.h",
         "public/pw_rpc/internal/packet.h",
         "public/pw_rpc/internal/server_call.h",
+        "public/pw_rpc/method_info.h",
         "public/pw_rpc/method_type.h",
         "public/pw_rpc/writer.h",
         "server.cc",
@@ -99,6 +100,7 @@ pw_cc_library(
         "public/pw_rpc/channel.h",
         "public/pw_rpc/client.h",
         "public/pw_rpc/internal/service_client.h",
+        "public/pw_rpc/method_info.h",
         "public/pw_rpc/server.h",
         "public/pw_rpc/service.h",
     ],
@@ -115,7 +117,73 @@ pw_cc_library(
         "//pw_span",
         "//pw_status",
         "//pw_sync:lock_annotations",
+        "//pw_sync:mutex",
     ],
+)
+
+pw_cc_library(
+    name = "synchronous_client_api",
+    hdrs = [
+        "public/pw_rpc/synchronous_call.h",
+        "public/pw_rpc/synchronous_call_result.h",
+    ],
+    includes = ["public"],
+    deps = [
+        ":pw_rpc",
+        "//pw_chrono:system_clock",
+        "//pw_sync:timed_thread_notification",
+    ],
+)
+
+pw_cc_library(
+    name = "client_server_testing",
+    hdrs = ["public/pw_rpc/internal/client_server_testing.h"],
+    includes = ["public"],
+    deps = [
+        ":client_server",
+        ":internal_test_utils",
+        "//pw_bytes",
+        "//pw_result",
+    ],
+)
+
+pw_cc_library(
+    name = "client_server_testing_threaded",
+    hdrs = ["public/pw_rpc/internal/client_server_testing_threaded.h"],
+    includes = ["public"],
+    deps = [
+        ":client_server_testing",
+        "//pw_bytes",
+        "//pw_result",
+        "//pw_sync:binary_semaphore",
+        "//pw_sync:lock_annotations",
+        "//pw_sync:mutex",
+        "//pw_thread:thread",
+    ],
+)
+
+pw_cc_library(
+    name = "test_helpers",
+    hdrs = ["public/pw_rpc/test_helpers.h"],
+    includes = ["public"],
+    deps = [
+        ":internal_test_utils",
+        ":pw_rpc",
+        "//pw_assert",
+        "//pw_chrono:system_clock",
+        "//pw_status",
+        "//pw_sync:counting_semaphore",
+        "//pw_thread:yield",
+    ],
+)
+
+# thread_testing target is kept for backward compatibility.
+# New code should use test_helpers instead.
+pw_cc_library(
+    name = "thread_testing",
+    hdrs = ["public/pw_rpc/thread_testing.h"],
+    includes = ["public"],
+    deps = [":test_helpers"],
 )
 
 pw_cc_library(
@@ -145,29 +213,29 @@ pw_cc_library(
         "//pw_containers:wrapped_iterator",
         "//pw_rpc/raw:fake_channel_output",
         "//pw_span",
+        "//pw_sync:mutex",
     ],
 )
 
-# TODO(pwbug/507): Enable this library when logging_event_handler can be used.
-filegroup(
+pw_cc_library(
     name = "integration_testing",
     srcs = [
         "integration_testing.cc",
-        # ],
-        # hdrs = [
+    ],
+    hdrs = [
         "public/pw_rpc/integration_test_socket_client.h",
         "public/pw_rpc/integration_testing.h",
     ],
-    #deps = [
-    #    ":client",
-    #    "//pw_assert",
-    #    "//pw_hdlc:pw_rpc",
-    #    "//pw_hdlc:rpc_channel_output",
-    #    "//pw_log",
-    #    "//pw_stream:socket_stream",
-    #    "//pw_unit_test",
-    #    "//pw_unit_test:logging_event_handler",
-    #],
+    deps = [
+        ":pw_rpc",
+        "//pw_assert",
+        "//pw_hdlc:pw_rpc",
+        "//pw_hdlc:rpc_channel_output",
+        "//pw_log",
+        "//pw_stream:socket_stream",
+        "//pw_unit_test",
+        "//pw_unit_test:logging_event_handler",
+    ],
 )
 
 # TODO(pwbug/507): Add the client integration test to the build.
@@ -255,6 +323,13 @@ pw_cc_test(
     deps = [":internal_test_utils"],
 )
 
+# TODO(b/234874064): Add test_helpers_test when it is possible to use .options
+# in bazel build.
+filegroup(
+    name = "test_helpers_test",
+    srcs = ["test_helpers_test.cc"],
+)
+
 proto_library(
     name = "internal_packet_proto",
     srcs = ["internal/packet.proto"],
@@ -278,7 +353,10 @@ pw_proto_library(
 
 proto_library(
     name = "pw_rpc_test_proto",
-    srcs = ["pw_rpc_test_protos/test.proto"],
+    srcs = [
+        "pw_rpc_test_protos/no_package.proto",
+        "pw_rpc_test_protos/test.proto",
+    ],
     strip_import_prefix = "//pw_rpc",
 )
 
@@ -324,6 +402,17 @@ proto_plugin(
     visibility = ["//visibility:public"],
 )
 
+proto_plugin(
+    name = "pw_cc_plugin_pwpb_rpc",
+    outputs = [
+        "{protopath}.rpc.pwpb.h",
+    ],
+    protoc_plugin_name = "pwpb_rpc",
+    tool = "@pigweed//pw_rpc/py:plugin_pwpb",
+    use_built_in_shell_environment = True,
+    visibility = ["//visibility:public"],
+)
+
 proto_library(
     name = "echo_proto",
     srcs = [
@@ -334,4 +423,6 @@ proto_library(
 pw_proto_library(
     name = "echo_cc",
     deps = [":echo_proto"],
+    # TODO(tpudlik): We should provide echo.options to nanopb here, but the
+    # current proto codegen implementation provides no mechanism for doing so.
 )

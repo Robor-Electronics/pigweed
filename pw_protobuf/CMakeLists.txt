@@ -26,39 +26,32 @@ pw_add_module_library(pw_protobuf.config
     ${pw_protobuf_CONFIG}
 )
 
-pw_add_module_library(pw_protobuf
-  HEADERS
-    public/pw_protobuf/decoder.h
-    public/pw_protobuf/encoder.h
-    public/pw_protobuf/find.h
-    public/pw_protobuf/internal/proto_integer_base.h
-    public/pw_protobuf/map_utils.h
-    public/pw_protobuf/message.h
-    public/pw_protobuf/serialized_size.h
-    public/pw_protobuf/stream_decoder.h
-    public/pw_protobuf/wire_format.h
-  PUBLIC_INCLUDES
-    public
-  PUBLIC_DEPS
-    pw_assert
-    pw_bytes
-    pw_protobuf.config
-    pw_polyfill.span
-    pw_polyfill.cstddef
-    pw_result
-    pw_status
-    pw_stream
-    pw_stream.interval_reader
-    pw_varint
-    pw_varint.stream
-  SOURCES
-    decoder.cc
-    encoder.cc
-    find.cc
-    map_utils.cc
-    message.cc
-    stream_decoder.cc
-)
+add_library(pw_protobuf)
+target_sources(pw_protobuf
+        PUBLIC
+        decoder.cc
+        encoder.cc
+        find.cc
+        map_utils.cc
+        message.cc
+        stream_decoder.cc)
+target_link_libraries(pw_protobuf
+        PUBLIC
+        pw_assert
+        pw_bytes
+        pw_containers.vector
+        pw_function
+        pw_protobuf.config
+        pw_polyfill.span
+        pw_polyfill.cstddef
+        pw_result
+        pw_status
+        pw_stream
+        pw_stream.interval_reader
+        pw_varint
+        pw_varint.stream)
+target_include_directories(pw_protobuf
+        PUBLIC public)
 
 pw_add_module_library(pw_protobuf.bytes_utils
   HEADERS
@@ -102,12 +95,35 @@ pw_add_test(pw_protobuf.find_test
     pw_protobuf
 )
 
-pw_add_test(pw_protobuf.codegen_test
+pw_add_test(pw_protobuf.codegen_decoder_test
   SOURCES
-    codegen_test.cc
+    codegen_decoder_test.cc
   DEPS
     pw_protobuf
     pw_protobuf.codegen_test_protos.pwpb
+  GROUPS
+    modules
+    pw_protobuf
+)
+
+pw_add_test(pw_protobuf.codegen_encoder_test
+  SOURCES
+    codegen_encoder_test.cc
+  DEPS
+    pw_protobuf
+    pw_protobuf.codegen_test_protos.pwpb
+  GROUPS
+    modules
+    pw_protobuf
+)
+
+pw_add_test(pw_protobuf.codegen_message_test
+  SOURCES
+    codegen_message_test.cc
+  DEPS
+    pw_protobuf
+    pw_protobuf.codegen_test_protos.pwpb
+    pw_string
   GROUPS
     modules
     pw_protobuf
@@ -153,9 +169,19 @@ pw_add_test(pw_protobuf.message_test
     pw_protobuf
 )
 
-pw_proto_library(pw_protobuf.common_protos
+pw_proto_library(pw_protobuf.common_proto
   SOURCES
     pw_protobuf_protos/common.proto
+)
+
+pw_proto_library(pw_protobuf.status_proto
+  SOURCES
+    pw_protobuf_protos/status.proto
+)
+
+pw_proto_library(pw_protobuf.codegen_protos
+  SOURCES
+    pw_protobuf_codegen_protos/options.proto
 )
 
 pw_proto_library(pw_protobuf.codegen_test_protos
@@ -164,8 +190,14 @@ pw_proto_library(pw_protobuf.codegen_test_protos
     pw_protobuf_test_protos/imported.proto
     pw_protobuf_test_protos/importer.proto
     pw_protobuf_test_protos/non_pw_package.proto
+    pw_protobuf_test_protos/optional.proto
     pw_protobuf_test_protos/proto2.proto
     pw_protobuf_test_protos/repeated.proto
+  INPUTS
+    pw_protobuf_test_protos/full_test.options
+    pw_protobuf_test_protos/optional.options
+    pw_protobuf_test_protos/repeated.options
   DEPS
-    pw_protobuf.common_protos
+    pw_protobuf.common_proto
+    pw_protobuf.status_proto
 )

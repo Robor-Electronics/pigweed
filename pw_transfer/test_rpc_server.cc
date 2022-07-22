@@ -1,4 +1,4 @@
-// Copyright 2021 The Pigweed Authors
+// Copyright 2022 The Pigweed Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not
 // use this file except in compliance with the License. You may obtain a copy of
@@ -14,7 +14,7 @@
 
 // Simple RPC server with the transfer service registered. Reads HDLC frames
 // with RPC packets through a socket. The transfer service reads and writes to
-// files within a given directory. The name of a file is its transfer ID.
+// files within a given directory. The name of a file is its resource ID.
 
 #include <cstddef>
 #include <filesystem>
@@ -32,7 +32,6 @@
 #include "pw_thread_stl/options.h"
 #include "pw_transfer/transfer.h"
 #include "pw_transfer_test/test_server.raw_rpc.pb.h"
-#include "pw_work_queue/work_queue.h"
 
 namespace pw::transfer {
 namespace {
@@ -40,9 +39,9 @@ namespace {
 class FileTransferHandler final : public ReadWriteHandler {
  public:
   FileTransferHandler(TransferService& service,
-                      uint32_t transfer_id,
+                      uint32_t resource_id,
                       const char* path)
-      : ReadWriteHandler(transfer_id), service_(service), path_(path) {
+      : ReadWriteHandler(resource_id), service_(service), path_(path) {
     service_.RegisterHandler(*this);
   }
 
@@ -84,9 +83,8 @@ class TestServerService
 
   void set_directory(const char* directory) { directory_ = directory; }
 
-  StatusWithSize ReloadTransferFiles(ConstByteSpan, ByteSpan) {
+  void ReloadTransferFiles(ConstByteSpan, rpc::RawUnaryResponder&) {
     LoadFileHandlers();
-    return StatusWithSize();
   }
 
   void LoadFileHandlers() {
@@ -98,12 +96,12 @@ class TestServerService
         continue;
       }
 
-      int transfer_id = std::atoi(entry.path().filename().c_str());
-      if (transfer_id > 0) {
-        PW_LOG_DEBUG("Found transfer file %d", transfer_id);
+      int resource_id = std::atoi(entry.path().filename().c_str());
+      if (resource_id > 0) {
+        PW_LOG_DEBUG("Found transfer file %d", resource_id);
         file_transfer_handlers_.emplace_back(
             std::make_shared<FileTransferHandler>(
-                transfer_service_, transfer_id, entry.path().c_str()));
+                transfer_service_, resource_id, entry.path().c_str()));
       }
     }
   }
@@ -117,10 +115,10 @@ class TestServerService
 constexpr size_t kChunkSizeBytes = 256;
 constexpr size_t kMaxReceiveSizeBytes = 1024;
 
-work_queue::WorkQueueWithBuffer<10> work_queue_;
-
-TransferServiceBuffer<kChunkSizeBytes> transfer_service(work_queue_,
-                                                        kMaxReceiveSizeBytes);
+std::array<std::byte, kChunkSizeBytes> chunk_buffer;
+std::array<std::byte, kChunkSizeBytes> encode_buffer;
+transfer::Thread<4, 4> transfer_thread(chunk_buffer, encode_buffer);
+TransferService transfer_service(transfer_thread, kMaxReceiveSizeBytes);
 TestServerService test_server_service(transfer_service);
 
 void RunServer(int socket_port, const char* directory) {
@@ -130,10 +128,10 @@ void RunServer(int socket_port, const char* directory) {
   test_server_service.LoadFileHandlers();
 
   rpc::system_server::Init();
-  rpc::system_server::Server().RegisterService(test_server_service);
-  rpc::system_server::Server().RegisterService(transfer_service);
+  rpc::system_server::Server().RegisterService(test_server_service,
+                                               transfer_service);
 
-  thread::DetachedThread(thread::stl::Options(), work_queue_);
+  thread::DetachedThread(thread::stl::Options(), transfer_thread);
 
   PW_LOG_INFO("Starting pw_rpc server");
   PW_CHECK_OK(rpc::system_server::Start());

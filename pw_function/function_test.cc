@@ -20,7 +20,7 @@
 namespace pw {
 namespace {
 
-// TODO(pwbug/47): Convert this to a compilation failure test.
+// TODO(b/234882063): Convert this to a compilation failure test.
 #if defined(PW_COMPILE_FAIL_TEST_CannotInstantiateWithNonFunction)
 
 [[maybe_unused]] Function<int> function_pointer;
@@ -208,6 +208,13 @@ TEST(Function, MoveAssign_Inline) {
 #ifndef __clang_analyzer__
   EXPECT_EQ(moved, nullptr);
 #endif  // __clang_analyzer__
+}
+
+TEST(Function, MoveAssign_Callable) {
+  Function<int(int, int)> operation = Multiply;
+  EXPECT_EQ(operation(3, 3), 9);
+  operation = [](int a, int b) -> int { return a + b; };
+  EXPECT_EQ(operation(3, 3), 6);
 }
 
 class MoveTracker {

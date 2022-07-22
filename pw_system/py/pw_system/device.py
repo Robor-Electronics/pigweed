@@ -21,12 +21,13 @@ from typing import Any, Callable, List, Union, Optional
 
 from pw_hdlc.rpc import HdlcRpcClient, default_channels
 import pw_log_tokenized
-
 from pw_log.proto import log_pb2
+from pw_metric import metric_parser
 from pw_rpc import callback_client, console_tools
 from pw_status import Status
-from pw_tokenizer.detokenize import Detokenizer
+from pw_tokenizer import detokenize
 from pw_tokenizer.proto import decode_optionally_tokenized
+import pw_unit_test.rpc
 
 # Internal log for troubleshooting this tool (the console).
 _LOG = logging.getLogger('tools')
@@ -44,12 +45,13 @@ class Device:
                  read,
                  write,
                  proto_library: List[Union[ModuleType, Path]],
-                 detokenizer: Optional[Detokenizer],
+                 detokenizer: Optional[detokenize.Detokenizer],
                  timestamp_decoder: Optional[Callable[[int], str]],
                  rpc_timeout_s=5):
         self.channel_id = channel_id
         self.protos = proto_library
         self.detokenizer = detokenizer
+        self.rpc_timeout_s = rpc_timeout_s
 
         self.logger = DEFAULT_DEVICE_LOGGER
         self.logger.setLevel(logging.DEBUG)  # Allow all device logs through.
@@ -57,7 +59,7 @@ class Device:
         self._expected_log_sequence_id = 0
 
         callback_client_impl = callback_client.Impl(
-            default_unary_timeout_s=rpc_timeout_s,
+            default_unary_timeout_s=self.rpc_timeout_s,
             default_stream_timeout_s=None,
         )
         self.client = HdlcRpcClient(
@@ -78,6 +80,10 @@ class Device:
     def rpcs(self) -> Any:
         """Returns an object for accessing services on the specified channel."""
         return next(iter(self.client.client.channels())).rpcs
+
+    def run_tests(self, timeout_s: Optional[float] = 5) -> bool:
+        """Runs the unit tests on this device."""
+        return pw_unit_test.rpc.run_tests(self.rpcs, timeout_s=timeout_s)
 
     def listen_to_log_stream(self):
         """Opens a log RPC for the device's unrequested log stream.
@@ -100,10 +106,9 @@ class Device:
         if error != Status.CANCELLED:
             self.listen_to_log_stream()
 
-    def _handle_log_drop_count(self, drop_count: int):
-        message = f'Dropped {drop_count} log'
-        if drop_count > 1:
-            message += 's'
+    def _handle_log_drop_count(self, drop_count: int, reason: str):
+        log_text = 'log' if drop_count == 1 else 'logs'
+        message = f'Dropped {drop_count} {log_text} due to {reason}'
         self._emit_device_log(logging.WARNING, '', '', '', message)
 
     def _check_for_dropped_logs(self, log_entries_proto: log_pb2.LogEntries):
@@ -115,7 +120,7 @@ class Device:
         self._expected_log_sequence_id = (
             log_entries_proto.first_entry_sequence_id + messages_received)
         if dropped_log_count > 0:
-            self._handle_log_drop_count(dropped_log_count)
+            self._handle_log_drop_count(dropped_log_count, 'loss at transport')
         elif dropped_log_count < 0:
             _LOG.error('Log sequence ID is smaller than expected')
 
@@ -135,8 +140,10 @@ class Device:
 
             # Handle dropped count.
             if log_proto.dropped:
-                self._handle_log_drop_count(log_proto.dropped)
-                return
+                drop_reason = log_proto.message.decode("utf-8").lower(
+                ) if log_proto.message else 'enqueue failure on device'
+                self._handle_log_drop_count(log_proto.dropped, drop_reason)
+                continue
             self._emit_device_log(level, '', decoded_timestamp, log.module,
                                   log.message, **dict(log.fields))
 
@@ -167,3 +174,19 @@ class Device:
         if self.timestamp_decoder:
             return self.timestamp_decoder(timestamp)
         return str(datetime.timedelta(seconds=timestamp / 1e9))[:-3]
+
+    def get_and_log_metrics(self) -> dict:
+        """Retrieves the parsed metrics and logs them to the console."""
+        metrics = metric_parser.parse_metrics(self.rpcs, self.detokenizer,
+                                              self.rpc_timeout_s)
+
+        def print_metrics(metrics, path):
+            """Traverses dictionaries, until a non-dict value is reached."""
+            for path_name, metric in metrics.items():
+                if isinstance(metric, dict):
+                    print_metrics(metric, path + '/' + path_name)
+                else:
+                    _LOG.info('%s/%s: %s', path, path_name, str(metric))
+
+        print_metrics(metrics, '')
+        return metrics

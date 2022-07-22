@@ -17,11 +17,11 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from pw_cli import env
+
 from pw_build_info import build_id
 
 # Since build_id.cc depends on pw_preprocessor, we have to use the in-tree path.
-_MODULE_DIR = Path(env.pigweed_environment().PW_ROOT) / 'pw_build_info'
+_MODULE_DIR = Path(__file__).parent.parent.resolve()
 _MODULE_PY_DIR = Path(__file__).parent.resolve()
 
 _SHA1_BUILD_ID_LENGTH = 20
@@ -40,8 +40,10 @@ class TestGnuBuildId(unittest.TestCase):
                 'build_id.cc',
                 _MODULE_PY_DIR / 'print_build_id.cc',
                 '-Ipublic',
+                '-I../pw_polyfill/public',
                 '-I../pw_preprocessor/public',
-                '-std=c++20',
+                '-I../pw_span/public',
+                '-std=c++17',
                 '-fuse-ld=lld',
                 '-Wl,-Tadd_build_id_to_default_linker_script.ld',
                 '-Wl,--build-id=sha1',
@@ -53,7 +55,8 @@ class TestGnuBuildId(unittest.TestCase):
                                      stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT,
                                      cwd=_MODULE_DIR)
-            self.assertEqual(process.returncode, 0)
+            self.assertEqual(process.returncode, 0,
+                             process.stdout.decode(errors='replace'))
 
             # Run the compiled binary so the printed build ID can be read.
             process = subprocess.run([exe_file],

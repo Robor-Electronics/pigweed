@@ -522,7 +522,7 @@ This facade module (``pw_assert``) does not provide a backend. See
 
 The backend must provide the header
 
-``pw_assert_backend/backend.h``
+``pw_assert_backend/check_backend.h``
 
 and that header must define the following macros:
 
@@ -609,7 +609,7 @@ is providing a macro-based backend API for the ``PW_ASSERT()`` and
   are extremely confusingly similar and are NOT interchangeable.
 
 A macro-based backend for the ``PW_ASSERT()`` macros must provide the following
-macro in a header at ``pw_assert_backend/assert_lite_backend.h``.
+macro in a header at ``pw_assert_backend/assert_backend.h``.
 
 .. cpp:function:: PW_ASSERT_HANDLE_FAILURE(expression)
 
@@ -780,6 +780,11 @@ Available Assert Backends
   the functionality. There are (a) tests for the facade macro processing logic,
   using a fake assert backend; and (b) compile tests to verify that the
   selected backend compiles with all supported assert constructions and types.
+- ``pw_assert:print_and_abort_backend`` - **Stable** - Uses the ``printf`` and
+  ``abort`` standard library functions to implement the assert facade. Prints
+  the assert expression, evaluated arguments if any, file/line, function name,
+  and user message, then aborts. Only suitable for targets that support these
+  standard library functions. Compatible with C++14.
 - ``pw_assert_basic`` - **Stable** - The assert basic module is a simple assert
   handler that displays the failed assert line and the values of captured
   arguments. Output is directed to ``pw_sys_io``. This module is a great

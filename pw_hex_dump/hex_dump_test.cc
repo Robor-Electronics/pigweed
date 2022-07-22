@@ -18,11 +18,11 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstring>
-#include <span>
 #include <string_view>
 
 #include "gtest/gtest.h"
 #include "pw_log/log.h"
+#include "pw_span/span.h"
 
 namespace pw::dump {
 namespace {
@@ -405,7 +405,7 @@ TEST_F(SmallBuffer, PrefixIncreasesBufferRequirement) {
 
 TEST(BadBuffer, ZeroSize) {
   char buffer[1] = {static_cast<char>(0xaf)};
-  FormattedHexDumper dumper(std::span<char>(buffer, 0));
+  FormattedHexDumper dumper(span<char>(buffer, 0));
   EXPECT_EQ(dumper.BeginDump(source_data), Status::FailedPrecondition());
   EXPECT_EQ(dumper.DumpLine(), Status::FailedPrecondition());
   EXPECT_EQ(buffer[0], static_cast<char>(0xaf));
@@ -413,7 +413,7 @@ TEST(BadBuffer, ZeroSize) {
 
 TEST(BadBuffer, NullPtrDest) {
   FormattedHexDumper dumper;
-  EXPECT_EQ(dumper.SetLineBuffer(std::span<char>()), Status::InvalidArgument());
+  EXPECT_EQ(dumper.SetLineBuffer(span<char>()), Status::InvalidArgument());
   EXPECT_EQ(dumper.BeginDump(source_data), Status::FailedPrecondition());
   EXPECT_EQ(dumper.DumpLine(), Status::FailedPrecondition());
 }
@@ -421,7 +421,8 @@ TEST(BadBuffer, NullPtrDest) {
 TEST(BadBuffer, NullPtrSrc) {
   char buffer[24] = {static_cast<char>(0)};
   FormattedHexDumper dumper(buffer);
-  EXPECT_EQ(dumper.BeginDump(ByteSpan(nullptr, 64)), Status::InvalidArgument());
+  EXPECT_EQ(dumper.BeginDump(ByteSpan(static_cast<std::byte*>(nullptr), 64)),
+            Status::InvalidArgument());
   // Don't actually dump nullptr in this test as it could cause a crash.
 }
 

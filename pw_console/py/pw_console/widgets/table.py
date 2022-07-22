@@ -33,10 +33,7 @@ class TableView:
     LAST_TABLE_COLUMN_NAMES = ['msg', 'message']
 
     def __init__(self, prefs: ConsolePrefs):
-        self.prefs = prefs
-        # Max column widths of each log field
-        self.column_padding = ' ' * self.prefs.spaces_between_columns
-
+        self.set_prefs(prefs)
         self.column_widths: collections.OrderedDict = collections.OrderedDict()
         self._header_fragment_cache = None
 
@@ -45,12 +42,14 @@ class TableView:
         self.column_widths['time'] = self._default_time_width
         self.column_widths['level'] = 3
         self._year_month_day_width: int = 9
-        if self.prefs.hide_date_from_log_time:
-            self.column_widths['time'] = (self._default_time_width -
-                                          self._year_month_day_width)
 
         # Width of all columns except the final message
         self.column_width_prefix_total = 0
+
+    def set_prefs(self, prefs: ConsolePrefs) -> None:
+        self.prefs = prefs
+        # Max column widths of each log field
+        self.column_padding = ' ' * self.prefs.spaces_between_columns
 
     def all_column_names(self):
         columns_names = [
@@ -122,6 +121,12 @@ class TableView:
     def _update_table_header(self):
         default_style = 'bold'
         fragments: collections.deque = collections.deque()
+
+        # Update time column width to current prefs setting
+        self.column_widths['time'] = self._default_time_width
+        if self.prefs.hide_date_from_log_time:
+            self.column_widths['time'] = (self._default_time_width -
+                                          self._year_month_day_width)
 
         for name, width in self._ordered_column_widths():
             # These fields will be shown at the end

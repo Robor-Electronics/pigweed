@@ -24,10 +24,10 @@ the reported tokens.
 * **PW_CHECK_\*()**: The ``PW_CHECK_*()`` macros work in contexts where
   tokenization is fully supported, so they are able to capture the CHECK
   statement expression and any provided string literal in addition to the file
-  name:
+  name in the pw_log_tokenized key/value format:
 
-    Check failure in pw_metric/size_report/base.cc: \*unoptimizable >= 0,
-    Ensure this CHECK logic stays.
+    "■msg♦Check failure: \*unoptimizable >= 0, Ensure this CHECK logic
+    stays■module♦KVS■file♦pw_kvs/size_report/base.cc"
 
   Evaluated values of ``PW_CHECK_*()`` statements are not captured, and any
   string formatting arguments are also not captured. This minimizes call-site
@@ -56,7 +56,7 @@ Setup
 #. Add file name tokens to your token database. pw_assert_tokenized can't create
    file name tokens that can be parsed out of the final compiled binary. The
    ``pw_relative_source_file_names``
-   `GN template <module-pw_build-relative-source-file-names>`_ can be used to
+   :ref:`GN template<module-pw_build-relative-source-file-names>` can be used to
    collect the names of all source files used in your final executable into a
    JSON file, which can then be included in the creation of a tokenizer
    database.

@@ -88,6 +88,9 @@ class InvocationContext {
                   .ok());
   }
 
+  const Output& output() const { return output_; }
+  Output& output() { return output_; }
+
  protected:
   // Constructs the invocation context. The args for the ChannelOutput type are
   // passed in a std::tuple. The args for the Service are forwarded directly
@@ -98,14 +101,11 @@ class InvocationContext {
                     ServiceArgs&&... service_args)
       : method_type_(method_type),
         channel_(123, &output_),
-        server_(std::span(static_cast<rpc::Channel*>(&channel_), 1)),
+        server_(span(static_cast<rpc::Channel*>(&channel_), 1)),
         service_(std::forward<ServiceArgs>(service_args)...),
         context_(server_, channel_.id(), service_, method, 0) {
     server_.RegisterService(service_);
   }
-
-  const Output& output() const { return output_; }
-  Output& output() { return output_; }
 
   uint32_t channel_id() const { return channel_.id(); }
 

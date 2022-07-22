@@ -14,10 +14,10 @@
 
 java_library {
     name: "pw_rpc_java_client",
-    host_supported: true,
     srcs: ["java/main/dev/pigweed/pw_rpc/*.java"],
     visibility: ["//visibility:public"],
     static_libs: [
+        "pw_log_android_java",
         "pw_rpc_packet_proto_java_lite",
     ],
     libs: [

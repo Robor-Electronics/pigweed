@@ -14,20 +14,20 @@
 
 #include "pw_log/proto_utils.h"
 
-#include <span>
 #include <string_view>
 
 #include "pw_bytes/endian.h"
 #include "pw_log/levels.h"
-#include "pw_log/proto/log.pwpb.h"
 #include "pw_log_tokenized/metadata.h"
 #include "pw_protobuf/wire_format.h"
+#include "pw_span/span.h"
 
 namespace pw::log {
 
 Result<ConstByteSpan> EncodeLog(int level,
                                 unsigned int flags,
                                 std::string_view module_name,
+                                std::string_view thread_name,
                                 std::string_view file_name,
                                 int line_number,
                                 int64_t ticks_since_epoch,
@@ -41,7 +41,7 @@ Result<ConstByteSpan> EncodeLog(int level,
   }
 
   // Defer status checks until the end.
-  Status status = encoder.WriteMessage(std::as_bytes(std::span(message)));
+  Status status = encoder.WriteMessage(as_bytes(span(message)));
   status = encoder.WriteLineLevel(PackLineLevel(line_number, level));
   if (flags != 0) {
     status = encoder.WriteFlags(flags);
@@ -50,19 +50,23 @@ Result<ConstByteSpan> EncodeLog(int level,
 
   // Module name and file name may or may not be present.
   if (!module_name.empty()) {
-    status = encoder.WriteModule(std::as_bytes(std::span(module_name)));
+    status = encoder.WriteModule(as_bytes(span(module_name)));
   }
   if (!file_name.empty()) {
-    status = encoder.WriteFile(std::as_bytes(std::span(file_name)));
+    status = encoder.WriteFile(as_bytes(span(file_name)));
+  }
+  if (!thread_name.empty()) {
+    status = encoder.WriteThread(as_bytes(span(thread_name)));
   }
   PW_TRY(encoder.status());
   return ConstByteSpan(encoder);
 }
 
-Result<ConstByteSpan> EncodeTokenizedLog(pw::log_tokenized::Metadata metadata,
-                                         ConstByteSpan tokenized_data,
-                                         int64_t ticks_since_epoch,
-                                         ByteSpan encode_buffer) {
+LogEntry::MemoryEncoder CreateEncoderAndEncodeTokenizedLog(
+    pw::log_tokenized::Metadata metadata,
+    ConstByteSpan tokenized_data,
+    int64_t ticks_since_epoch,
+    ByteSpan encode_buffer) {
   // Encode message to the LogEntry protobuf.
   LogEntry::MemoryEncoder encoder(encode_buffer);
 
@@ -76,12 +80,10 @@ Result<ConstByteSpan> EncodeTokenizedLog(pw::log_tokenized::Metadata metadata,
   status = encoder.WriteTimestamp(ticks_since_epoch);
   if (metadata.module() != 0) {
     const uint32_t little_endian_module =
-        bytes::ConvertOrderTo(std::endian::little, metadata.module());
-    status =
-        encoder.WriteModule(std::as_bytes(std::span(&little_endian_module, 1)));
+        bytes::ConvertOrderTo(endian::little, metadata.module());
+    status = encoder.WriteModule(as_bytes(span(&little_endian_module, 1)));
   }
-  PW_TRY(encoder.status());
-  return ConstByteSpan(encoder);
+  return encoder;
 }
 
 }  // namespace pw::log

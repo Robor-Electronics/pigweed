@@ -31,13 +31,51 @@ namespace pw::kvs {
 
 using std::byte;
 
-StatusWithSize FlashPartition::Output::DoWrite(std::span<const byte> data) {
+#if PW_CXX_STANDARD_IS_SUPPORTED(17)
+
+Status FlashPartition::Writer::DoWrite(ConstByteSpan data) {
+  if (partition_.size_bytes() <= position_) {
+    return Status::OutOfRange();
+  }
+  if (data.size_bytes() > (partition_.size_bytes() - position_)) {
+    return Status::ResourceExhausted();
+  }
+  if (data.size_bytes() == 0) {
+    return OkStatus();
+  }
+
+  const StatusWithSize sws = partition_.Write(position_, data);
+  if (sws.ok()) {
+    position_ += data.size_bytes();
+  }
+  return sws.status();
+}
+
+StatusWithSize FlashPartition::Reader::DoRead(ByteSpan data) {
+  if (position_ >= partition_.size_bytes()) {
+    return StatusWithSize::OutOfRange();
+  }
+
+  size_t bytes_to_read =
+      std::min(data.size_bytes(), partition_.size_bytes() - position_);
+
+  const StatusWithSize sws =
+      partition_.Read(position_, data.first(bytes_to_read));
+  if (sws.ok()) {
+    position_ += bytes_to_read;
+  }
+  return sws;
+}
+
+#endif  // PW_CXX_STANDARD_IS_SUPPORTED(17)
+
+StatusWithSize FlashPartition::Output::DoWrite(span<const byte> data) {
   PW_TRY_WITH_SIZE(flash_.Write(address_, data));
   address_ += data.size();
   return StatusWithSize(data.size());
 }
 
-StatusWithSize FlashPartition::Input::DoRead(std::span<byte> data) {
+StatusWithSize FlashPartition::Input::DoRead(span<byte> data) {
   StatusWithSize result = flash_.Read(address_, data);
   address_ += result.size();
   return result;
@@ -77,13 +115,12 @@ Status FlashPartition::Erase(Address address, size_t num_sectors) {
   return flash_.Erase(PartitionToFlashAddress(address), num_sectors);
 }
 
-StatusWithSize FlashPartition::Read(Address address, std::span<byte> output) {
+StatusWithSize FlashPartition::Read(Address address, span<byte> output) {
   PW_TRY_WITH_SIZE(CheckBounds(address, output.size()));
   return flash_.Read(PartitionToFlashAddress(address), output);
 }
 
-StatusWithSize FlashPartition::Write(Address address,
-                                     std::span<const byte> data) {
+StatusWithSize FlashPartition::Write(Address address, span<const byte> data) {
   if (permission_ == PartitionPermission::kReadOnly) {
     return StatusWithSize::PermissionDenied();
   }
@@ -123,7 +160,7 @@ Status FlashPartition::IsRegionErased(Address source_flash_address,
     PW_TRY(
         Read(source_flash_address + offset, read_size, read_buffer).status());
 
-    for (byte b : std::span(read_buffer, read_size)) {
+    for (byte b : span(read_buffer, read_size)) {
       if (b != erased_byte) {
         // Detected memory chunk is not entirely erased
         return OkStatus();
@@ -137,7 +174,7 @@ Status FlashPartition::IsRegionErased(Address source_flash_address,
   return OkStatus();
 }
 
-bool FlashPartition::AppearsErased(std::span<const byte> data) const {
+bool FlashPartition::AppearsErased(span<const byte> data) const {
   byte erased_content = flash_.erased_memory_content();
   for (byte b : data) {
     if (b != erased_content) {

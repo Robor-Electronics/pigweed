@@ -25,7 +25,7 @@ import subprocess
 import sys
 
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 SCRIPT_HEADER: str = '''
 ██████╗ ██╗ ██████╗ ██╗    ██╗███████╗███████╗██████╗     ██████╗  ██████╗  ██████╗███████╗
@@ -63,18 +63,26 @@ def parse_args() -> argparse.Namespace:
                         required=True,
                         type=argparse.FileType('r'),
                         help='Metadata JSON file')
+    parser.add_argument('--google-analytics-id',
+                        const=None,
+                        help='Enables Google Analytics with the provided ID')
     return parser.parse_args()
 
 
-def build_docs(src_dir: str, dst_dir: str) -> int:
+def build_docs(src_dir: str,
+               dst_dir: str,
+               google_analytics_id: Optional[str] = None) -> int:
     """Runs Sphinx to render HTML documentation from a doc tree."""
 
     # TODO(frolv): Specify the Sphinx script from a prebuilts path instead of
     # requiring it in the tree.
-    command = [
-        'sphinx-build', '-W', '-b', 'html', '-d', f'{dst_dir}/help', src_dir,
-        f'{dst_dir}/html'
-    ]
+    command = ['sphinx-build', '-W', '-b', 'html', '-d', f'{dst_dir}/help']
+
+    if google_analytics_id is not None:
+        command.append(f'-Dgoogle_analytics_id={google_analytics_id}')
+
+    command.extend([src_dir, f'{dst_dir}/html'])
+
     return subprocess.call(command)
 
 
@@ -120,7 +128,7 @@ def main() -> int:
     if os.path.exists(args.sphinx_build_dir):
         shutil.rmtree(args.sphinx_build_dir)
 
-    # TODO(pwbug/164): Printing the header causes unicode problems on Windows.
+    # TODO(b/235349854): Printing the header causes unicode problems on Windows.
     # Disabled for now; re-enable once the root issue is fixed.
     # print(SCRIPT_HEADER)
     copy_doc_tree(args)
@@ -128,7 +136,8 @@ def main() -> int:
     # Flush all script output before running Sphinx.
     print('-' * 80, flush=True)
 
-    return build_docs(args.sphinx_build_dir, args.out_dir)
+    return build_docs(args.sphinx_build_dir, args.out_dir,
+                      args.google_analytics_id)
 
 
 if __name__ == '__main__':

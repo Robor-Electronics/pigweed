@@ -26,10 +26,13 @@
 // USART_INSTANCE defined to USARTn, where n is the USART peripheral index.
 #define USART_INSTANCE PW_CONCAT(USART, PW_SYS_IO_STM32CUBE_USART_NUM)
 
-// USART_GPIO_ALTERNATE_FUNC defined to GPIO_AF7_USARTn, where n is the USART
-// peripheral index.
-#define USART_GPIO_ALTERNATE_FUNC \
-  PW_CONCAT(GPIO_AF7_USART, PW_SYS_IO_STM32CUBE_USART_NUM)
+// USART_GPIO_ALTERNATE_FUNC defined to GPIO_AFm_USARTn, where m is the
+// alternate function index and n is the USART peripheral index.
+#define USART_GPIO_ALTERNATE_FUNC        \
+  PW_CONCAT(GPIO_AF,                     \
+            PW_SYS_IO_STM32CUBE_GPIO_AF, \
+            _USART,                      \
+            PW_SYS_IO_STM32CUBE_USART_NUM)
 
 // USART_GPIO_PORT defined to GPIOx, where x is the GPIO port letter that the
 // TX/RX pins are on.
@@ -98,14 +101,14 @@ Status WriteByte(std::byte b) {
 // Writes a string using pw::sys_io, and add newline characters at the end.
 StatusWithSize WriteLine(const std::string_view& s) {
   size_t chars_written = 0;
-  StatusWithSize result = WriteBytes(std::as_bytes(std::span(s)));
+  StatusWithSize result = WriteBytes(as_bytes(span(s)));
   if (!result.ok()) {
     return result;
   }
   chars_written += result.size();
 
   // Write trailing newline.
-  result = WriteBytes(std::as_bytes(std::span("\r\n", 2)));
+  result = WriteBytes(as_bytes(span("\r\n", 2)));
   chars_written += result.size();
 
   return StatusWithSize(OkStatus(), chars_written);

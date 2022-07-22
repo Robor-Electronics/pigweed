@@ -13,15 +13,16 @@
 // the License.
 
 #include <array>
-#include <span>
 #include <string_view>
 
+#include "pw_assert/check.h"
 #include "pw_hdlc/encoder.h"
 #include "pw_hdlc/rpc_packets.h"
 #include "pw_log/log.h"
 #include "pw_rpc/echo_service_nanopb.h"
 #include "pw_rpc/server.h"
 #include "pw_rpc_system_server/rpc_server.h"
+#include "pw_span/span.h"
 
 namespace hdlc_example {
 namespace {
@@ -41,7 +42,7 @@ void Start() {
   RegisterServices();
 
   PW_LOG_INFO("Starting pw_rpc server");
-  pw::rpc::system_server::Start();
+  PW_CHECK_OK(pw::rpc::system_server::Start());
 }
 
 }  // namespace hdlc_example

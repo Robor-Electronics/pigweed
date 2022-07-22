@@ -18,7 +18,7 @@ workspace(
 )
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository", "new_git_repository")
 load("//pw_env_setup/bazel/cipd_setup:cipd_rules.bzl", "pigweed_deps")
 
 # Setup CIPD client and packages.
@@ -77,7 +77,7 @@ http_archive(
 # Used in modules: All cc targets.
 git_repository(
     name = "rules_cc_toolchain",
-    commit = "80b51ba81f14eebe06684efa25261f6dc46e9b29",
+    commit = "dd0ca09ea344fd705c71849aedaf2bc1428b9055",
     remote = "https://github.com/bazelembedded/rules_cc_toolchain.git",
 )
 
@@ -88,6 +88,15 @@ rules_cc_toolchain_deps()
 load("@rules_cc_toolchain//cc_toolchain:cc_toolchain.bzl", "register_cc_toolchains")
 
 register_cc_toolchains()
+
+# Sets up Bazels documentation generator.
+# Required by: rules_cc_toolchain.
+# Required by modules: All
+git_repository(
+    name = "io_bazel_stardoc",
+    commit = "2b801dc9b93f73812948ee4e505805511b0f55dc",
+    remote = "https://github.com/bazelbuild/stardoc.git",
+)
 
 # Set up Protobuf rules.
 # Required by: pigweed, com_github_bazelbuild_buildtools.
@@ -222,15 +231,6 @@ git_repository(
     commit = "17c93d5fa52c4c78860b8bbd327325fba6c85555",
     remote = "https://github.com/bazelembedded/bazel-embedded.git",
 )
-
-# Instantiate Pigweed configuration for embedded toolchain,
-# this must be called before bazel_embedded_deps.
-load(
-    "//pw_build:pigweed_toolchain_upstream.bzl",
-    "toolchain_upstream_deps",
-)
-
-toolchain_upstream_deps()
 
 # Configure bazel_embedded toolchains and platforms.
 load(
@@ -375,4 +375,11 @@ maven_install(
         "https://jcenter.bintray.com/",
         "https://repo1.maven.org/maven2",
     ],
+)
+
+new_git_repository(
+  name = "micro_ecc",
+  commit = "b335ee812bfcca4cd3fb0e2a436aab39553a555a",
+  remote = "https://github.com/kmackay/micro-ecc.git",
+  build_file = "//:third_party/micro_ecc/BUILD.bazel",
 )

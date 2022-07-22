@@ -32,9 +32,7 @@ using internal::PacketType;
 }  // namespace
 
 Status Client::ProcessPacket(ConstByteSpan data) {
-  PW_TRY_ASSIGN(Result<Packet> result,
-                Endpoint::ProcessPacket(data, Packet::kClient));
-  Packet& packet = *result;
+  PW_TRY_ASSIGN(Packet packet, Endpoint::ProcessPacket(data, Packet::kClient));
 
   // Find an existing call for this RPC, if any.
   internal::rpc_lock().lock();
@@ -87,6 +85,13 @@ Status Client::ProcessPacket(ConstByteSpan data) {
         PW_LOG_DEBUG("Received SERVER_STREAM for RPC without a server stream");
       }
       break;
+
+    case PacketType::REQUEST:
+    case PacketType::CLIENT_STREAM:
+    case PacketType::DEPRECATED_SERVER_STREAM_END:
+    case PacketType::CLIENT_ERROR:
+    case PacketType::DEPRECATED_CANCEL:
+    case PacketType::CLIENT_STREAM_END:
     default:
       internal::rpc_lock().unlock();
       PW_LOG_WARN("pw_rpc client unable to handle packet of type %u",

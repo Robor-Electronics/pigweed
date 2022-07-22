@@ -23,7 +23,6 @@ import com.google.protobuf.MessageLite;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
@@ -98,7 +97,7 @@ public final class StreamObserverMethodClientTest {
 
   @Test
   public void openUnary_startsRpc() {
-    Call call = unaryMethodClient.openUnary(SomeMessage.getDefaultInstance(), defaultObserver);
+    Call call = unaryMethodClient.openUnary(defaultObserver);
     assertThat(rpcManager.getPending(UNARY_RPC)).isSameInstanceAs(call);
   }
 
@@ -110,8 +109,7 @@ public final class StreamObserverMethodClientTest {
 
   @Test
   public void openServerStreaming_startsRpc() {
-    Call call = serverStreamingMethodClient.openServerStreaming(
-        SomeMessage.getDefaultInstance(), defaultObserver);
+    Call call = serverStreamingMethodClient.openServerStreaming(defaultObserver);
     assertThat(rpcManager.getPending(SERVER_STREAMING_RPC)).isSameInstanceAs(call);
   }
 

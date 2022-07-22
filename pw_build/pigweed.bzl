@@ -14,7 +14,7 @@
 """Pigweed build environment for bazel."""
 
 load(
-    ":bazel_internal/pigweed_internal.bzl",
+    "//pw_build/bazel_internal:pigweed_internal.bzl",
     _add_cc_and_c_targets = "add_cc_and_c_targets",
     _has_pw_assert_dep = "has_pw_assert_dep",
 )
@@ -22,7 +22,7 @@ load(
 def pw_cc_binary(**kwargs):
     kwargs["deps"] = kwargs.get("deps", [])
 
-    # TODO(pwbug/440): Remove this implicit dependency once we have a better
+    # TODO(b/234877642): Remove this implicit dependency once we have a better
     # way to handle the facades without introducing a circular dependency into
     # the build.
     if not _has_pw_assert_dep(kwargs["deps"]):
@@ -34,9 +34,9 @@ def pw_cc_library(**kwargs):
 
 def pw_cc_test(**kwargs):
     kwargs["deps"] = kwargs.get("deps", []) + \
-                     ["//pw_unit_test:main"]
+                     ["@pigweed//pw_unit_test:simple_printing_main"]
 
-    # TODO(pwbug/440): Remove this implicit dependency once we have a better
+    # TODO(b/234877642): Remove this implicit dependency once we have a better
     # way to handle the facades without introducing a circular dependency into
     # the build.
     if not _has_pw_assert_dep(kwargs["deps"]):

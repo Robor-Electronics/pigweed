@@ -22,6 +22,9 @@ from typing import cast
 
 from google.protobuf import descriptor_pb2
 
+from pw_protobuf import options, symbol_name_mapping
+from pw_protobuf_codegen_protos.options_pb2 import Options
+
 T = TypeVar('T')  # pylint: disable=invalid-name
 
 
@@ -63,7 +66,8 @@ class ProtoNode(abc.ABC):
 
     def cpp_name(self) -> str:
         """The name of this node in generated C++ code."""
-        return self._name.replace('.', '::')
+        return symbol_name_mapping.fix_cc_identifier(self._name).replace(
+            '.', '::')
 
     def cpp_namespace(self, root: Optional['ProtoNode'] = None) -> str:
         """C++ namespace of the node, up to the specified root."""
@@ -74,6 +78,14 @@ class ProtoNode(abc.ABC):
         """Fully-qualified package path of the node."""
         path = '.'.join(self._attr_hierarchy(lambda node: node.name(), None))
         return path.lstrip('.')
+
+    def pwpb_struct(self) -> str:
+        """Name of the pw_protobuf struct for this proto."""
+        return '::' + self.cpp_namespace() + '::Message'
+
+    def pwpb_table(self) -> str:
+        """Name of the pw_protobuf table constant for this proto."""
+        return '::' + self.cpp_namespace() + '::kMessageFields'
 
     def nanopb_fields(self) -> str:
         """Name of the Nanopb variable that represents the proto fields."""
@@ -149,7 +161,11 @@ class ProtoNode(abc.ABC):
         # pylint: enable=protected-access
 
     def find(self, path: str) -> Optional['ProtoNode']:
-        """Finds a node within this node's subtree."""
+        """Finds a node within this node's subtree.
+
+        Args:
+          path: The path to the sought node.
+        """
         node = self
 
         # pylint: disable=protected-access
@@ -218,7 +234,11 @@ class ProtoEnum(ProtoNode):
         return list(self._values)
 
     def add_value(self, name: str, value: int) -> None:
-        self._values.append((ProtoMessageField.upper_snake_case(name), value))
+        self._values.append((
+            ProtoMessageField.upper_snake_case(
+                symbol_name_mapping.fix_cc_enum_value_name(name)),
+            value,
+        ))
 
     def _supports_child(self, child: ProtoNode) -> bool:
         # Enums cannot have nested children.
@@ -230,6 +250,8 @@ class ProtoMessage(ProtoNode):
     def __init__(self, name: str):
         super().__init__(name)
         self._fields: List['ProtoMessageField'] = []
+        self._dependencies: Optional[List['ProtoMessage']] = None
+        self._dependency_cycles: List['ProtoMessage'] = []
 
     def type(self) -> ProtoNode.Type:
         return ProtoNode.Type.MESSAGE
@@ -243,6 +265,30 @@ class ProtoMessage(ProtoNode):
     def _supports_child(self, child: ProtoNode) -> bool:
         return (child.type() == self.Type.ENUM
                 or child.type() == self.Type.MESSAGE)
+
+    def dependencies(self) -> List['ProtoMessage']:
+        if self._dependencies is None:
+            self._dependencies = []
+            for field in self._fields:
+                if (field.type() !=
+                        descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE):
+                    continue
+
+                type_node = field.type_node()
+                assert type_node is not None
+                if type_node.type() == ProtoNode.Type.MESSAGE:
+                    self._dependencies.append(cast(ProtoMessage, type_node))
+
+        return list(self._dependencies)
+
+    def dependency_cycles(self) -> List['ProtoMessage']:
+        return list(self._dependency_cycles)
+
+    def remove_dependency_cycle(self, dependency: 'ProtoMessage'):
+        assert self._dependencies is not None
+        assert dependency in self._dependencies
+        self._dependencies.remove(dependency)
+        self._dependency_cycles.append(dependency)
 
 
 class ProtoService(ProtoNode):
@@ -289,18 +335,26 @@ class ProtoMessageField:
                  field_number: int,
                  field_type: int,
                  type_node: Optional[ProtoNode] = None,
-                 repeated: bool = False):
-        self._field_name = field_name
+                 optional: bool = False,
+                 repeated: bool = False,
+                 field_options: Optional[Options] = None):
+        self._field_name = symbol_name_mapping.fix_cc_identifier(field_name)
         self._number: int = field_number
         self._type: int = field_type
         self._type_node: Optional[ProtoNode] = type_node
+        self._optional: bool = optional
         self._repeated: bool = repeated
+        self._options: Optional[Options] = field_options
 
     def name(self) -> str:
         return self.upper_camel_case(self._field_name)
 
+    def field_name(self) -> str:
+        return self._field_name
+
     def enum_name(self) -> str:
-        return self.upper_snake_case(self._field_name)
+        return self.upper_snake_case(
+            symbol_name_mapping.fix_cc_enum_value_name(self._field_name))
 
     def number(self) -> int:
         return self._number
@@ -311,16 +365,20 @@ class ProtoMessageField:
     def type_node(self) -> Optional[ProtoNode]:
         return self._type_node
 
+    def is_optional(self) -> bool:
+        return self._optional
+
     def is_repeated(self) -> bool:
         return self._repeated
+
+    def options(self) -> Optional[Options]:
+        return self._options
 
     @staticmethod
     def upper_camel_case(field_name: str) -> str:
         """Converts a field name to UpperCamelCase."""
         name_components = field_name.split('_')
-        for i, _ in enumerate(name_components):
-            name_components[i] = name_components[i].lower().capitalize()
-        return ''.join(name_components)
+        return ''.join([word.lower().capitalize() for word in name_components])
 
     @staticmethod
     def upper_snake_case(field_name: str) -> str:
@@ -418,7 +476,8 @@ def _find_or_create_node(global_root: ProtoNode, package_root: ProtoNode,
 
 
 def _add_message_fields(global_root: ProtoNode, package_root: ProtoNode,
-                        message: ProtoNode, proto_message) -> None:
+                        message: ProtoNode, proto_message,
+                        proto_options) -> None:
     """Adds fields from a protobuf message descriptor to a message node."""
     assert message.type() == ProtoNode.Type.MESSAGE
     message = cast(ProtoMessage, message)
@@ -435,16 +494,15 @@ def _add_message_fields(global_root: ProtoNode, package_root: ProtoNode,
         else:
             type_node = None
 
+        optional = field.proto3_optional
         repeated = \
             field.label == descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED
+        field_options = options.match_options(
+            '.'.join((message.proto_path(), field.name)),
+            proto_options) if proto_options is not None else None
         message.add_field(
-            ProtoMessageField(
-                field.name,
-                field.number,
-                field.type,
-                type_node,
-                repeated,
-            ))
+            ProtoMessageField(field.name, field.number, field.type, type_node,
+                              optional, repeated, field_options))
 
 
 def _add_service_methods(global_root: ProtoNode, package_root: ProtoNode,
@@ -473,11 +531,12 @@ def _add_service_methods(global_root: ProtoNode, package_root: ProtoNode,
 
 
 def _populate_fields(proto_file, global_root: ProtoNode,
-                     package_root: ProtoNode) -> None:
+                     package_root: ProtoNode, proto_options) -> None:
     """Traverses a proto file, adding all message and enum fields to a tree."""
     def populate_message(node, message):
         """Recursively populates nested messages and enums."""
-        _add_message_fields(global_root, package_root, node, message)
+        _add_message_fields(global_root, package_root, node, message,
+                            proto_options)
 
         for proto_enum in message.enum_type:
             _add_enum_fields(node.find(proto_enum.name), proto_enum)
@@ -531,12 +590,14 @@ def _build_hierarchy(proto_file):
     return root, package_root
 
 
-def build_node_tree(file_descriptor_proto) -> Tuple[ProtoNode, ProtoNode]:
+def build_node_tree(file_descriptor_proto,
+                    proto_options=None) -> Tuple[ProtoNode, ProtoNode]:
     """Constructs a tree of proto nodes from a file descriptor.
 
     Returns the root node of the entire proto package tree and the node
     representing the file's package.
     """
     global_root, package_root = _build_hierarchy(file_descriptor_proto)
-    _populate_fields(file_descriptor_proto, global_root, package_root)
+    _populate_fields(file_descriptor_proto, global_root, package_root,
+                     proto_options)
     return global_root, package_root

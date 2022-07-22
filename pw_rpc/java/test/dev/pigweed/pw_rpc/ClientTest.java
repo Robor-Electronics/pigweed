@@ -26,14 +26,13 @@ import com.google.common.collect.ImmutableList;
 import com.google.protobuf.ExtensionRegistryLite;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.MessageLite;
-import dev.pigweed.pw.rpc.internal.Packet.PacketType;
-import dev.pigweed.pw.rpc.internal.Packet.RpcPacket;
+import dev.pigweed.pw_rpc.internal.Packet.PacketType;
+import dev.pigweed.pw_rpc.internal.Packet.RpcPacket;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnit;
@@ -131,6 +130,11 @@ public final class ClientTest {
         IllegalArgumentException.class, () -> client.method(CHANNEL_ID, "abc.Service/Method"));
     assertThrows(IllegalArgumentException.class,
         () -> client.method(CHANNEL_ID, "pw.rpc.test1.TheTestService/NotAnRpc").method());
+
+    Service service = new Service("throwaway.NotRealService",
+        Service.unaryMethod("NotAnRpc", SomeMessage.class, AnotherMessage.class));
+    assertThrows(IllegalArgumentException.class,
+        () -> client.method(CHANNEL_ID, service.method("NotAnRpc")));
   }
 
   @Test
@@ -174,6 +178,15 @@ public final class ClientTest {
         .isSameInstanceAs(SERVER_STREAMING_METHOD);
     assertThat(
         client.method(CHANNEL_ID, "pw.rpc.test1.TheTestService", "SomeClientStreaming").method())
+        .isSameInstanceAs(CLIENT_STREAMING_METHOD);
+  }
+
+  @Test
+  public void method_accessFromMethodInstance() {
+    assertThat(client.method(CHANNEL_ID, UNARY_METHOD).method()).isSameInstanceAs(UNARY_METHOD);
+    assertThat(client.method(CHANNEL_ID, SERVER_STREAMING_METHOD).method())
+        .isSameInstanceAs(SERVER_STREAMING_METHOD);
+    assertThat(client.method(CHANNEL_ID, CLIENT_STREAMING_METHOD).method())
         .isSameInstanceAs(CLIENT_STREAMING_METHOD);
   }
 

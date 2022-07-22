@@ -24,7 +24,13 @@ pw_add_module_library(pw_unit_test.config
     public/pw_unit_test/config.h
 )
 
-pw_add_module_library(pw_unit_test
+add_library(pw_unit_test INTERFACE)
+target_link_libraries(pw_unit_test
+  INTERFACE
+    "${pw_unit_test_GOOGLETEST_BACKEND}"
+)
+
+pw_add_module_library(pw_unit_test.light
   SOURCES
     framework.cc
   PUBLIC_DEPS
@@ -32,18 +38,41 @@ pw_add_module_library(pw_unit_test
     pw_preprocessor
     pw_string
     pw_unit_test.config
+  PUBLIC_INCLUDES
+    public_overrides  # pw_unit_test overrides the gtest/gtest.h header.
 )
 
-# pw_unit_test overrides the gtest/gtest.h header.
-target_include_directories(pw_unit_test PUBLIC public_overrides)
+pw_add_module_library(pw_unit_test.static_library_support
+  HEADERS
+    public/pw_unit_test/static_library_support.h
+  SOURCES
+    static_library_support.cc
+  PUBLIC_DEPS
+    pw_unit_test.light
+)
 
-pw_add_module_library(pw_unit_test.main
+pw_add_module_library(pw_unit_test.event_handler
+  HEADERS
+    public/pw_unit_test/event_handler.h
+)
+
+pw_add_module_library(pw_unit_test.googletest_style_event_handler
+  PUBLIC_DEPS
+    pw_unit_test.event_handler
+    pw_preprocessor
+  HEADERS
+    public/pw_unit_test/googletest_style_event_handler.h
+  SOURCES
+    googletest_style_event_handler.cc
+)
+
+pw_add_module_library(pw_unit_test.simple_printing_main
   SOURCES
     simple_printing_main.cc
     simple_printing_event_handler.cc
-  PUBLIC_DEPS
-    pw_unit_test
   PRIVATE_DEPS
+    pw_unit_test
+    pw_unit_test.googletest_style_event_handler
     pw_preprocessor
     pw_string
     pw_sys_io

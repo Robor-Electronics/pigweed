@@ -36,7 +36,10 @@ void MultiSink::HandleEntry(ConstByteSpan entry) {
 
 void MultiSink::HandleDropped(uint32_t drop_count) {
   std::lock_guard lock(lock_);
+  // Updating the sequence ID helps identify where the ingress drop happend when
+  // a drain peeks or pops.
   sequence_id_ += drop_count;
+  total_ingress_drops_ += drop_count;
   NotifyListeners();
 }
 
@@ -72,11 +75,13 @@ Result<ConstByteSpan> MultiSink::PeekOrPopEntry(
     Drain& drain,
     ByteSpan buffer,
     Request request,
-    uint32_t& drop_count_out,
+    uint32_t& drain_drop_count_out,
+    uint32_t& ingress_drop_count_out,
     uint32_t& entry_sequence_id_out) {
   size_t bytes_read = 0;
   entry_sequence_id_out = 0;
-  drop_count_out = 0;
+  drain_drop_count_out = 0;
+  ingress_drop_count_out = 0;
 
   std::lock_guard lock(lock_);
   PW_DCHECK_PTR_EQ(drain.multisink_, this);
@@ -103,8 +108,25 @@ Result<ConstByteSpan> MultiSink::PeekOrPopEntry(
   // current and last sequence IDs. Consecutive successful reads will always
   // differ by one at least, so it is subtracted out. If the read was not
   // successful, the difference is not adjusted.
-  drop_count_out = entry_sequence_id_out - drain.last_handled_sequence_id_ -
-                   (peek_status.ok() ? 1 : 0);
+  drain_drop_count_out = entry_sequence_id_out -
+                         drain.last_handled_sequence_id_ -
+                         (peek_status.ok() ? 1 : 0);
+
+  // Only report the ingress drop count when the drain catches up to where the
+  // drop happened, accounting only for the drops found and no more, as
+  // indicated by the gap in sequence IDs.
+  if (drain_drop_count_out > 0) {
+    ingress_drop_count_out =
+        std::min(drain_drop_count_out,
+                 total_ingress_drops_ - drain.last_handled_ingress_drop_count_);
+    // Remove the ingress drop count duplicated in drain_drop_count_out.
+    drain_drop_count_out -= ingress_drop_count_out;
+    // Check if all the ingress drops were reported.
+    drain.last_handled_ingress_drop_count_ =
+        total_ingress_drops_ > ingress_drop_count_out
+            ? total_ingress_drops_ - ingress_drop_count_out
+            : total_ingress_drops_;
+  }
 
   // The Peek above may have failed due to OutOfRange, now that we've set the
   // drop count see if we should return before attempting to pop.
@@ -117,7 +139,7 @@ Result<ConstByteSpan> MultiSink::PeekOrPopEntry(
     PW_CHECK(drain.reader_.PopFront().ok());
     drain.last_handled_sequence_id_ = entry_sequence_id_out;
   }
-  return std::as_bytes(buffer.first(bytes_read));
+  return as_bytes(buffer.first(bytes_read));
 }
 
 void MultiSink::AttachDrain(Drain& drain) {
@@ -133,6 +155,7 @@ void MultiSink::AttachDrain(Drain& drain) {
         oldest_entry_drain_.last_handled_sequence_id_;
   }
   drain.last_peek_sequence_id_ = drain.last_handled_sequence_id_;
+  drain.last_handled_ingress_drop_count_ = 0;
 }
 
 void MultiSink::DetachDrain(Drain& drain) {
@@ -202,23 +225,36 @@ Status MultiSink::Drain::PopEntry(const PeekedEntry& entry) {
 }
 
 Result<MultiSink::Drain::PeekedEntry> MultiSink::Drain::PeekEntry(
-    ByteSpan buffer, uint32_t& drop_count_out) {
+    ByteSpan buffer,
+    uint32_t& drain_drop_count_out,
+    uint32_t& ingress_drop_count_out) {
   PW_DCHECK_NOTNULL(multisink_);
   uint32_t entry_sequence_id_out;
-  Result<ConstByteSpan> peek_result = multisink_->PeekOrPopEntry(
-      *this, buffer, Request::kPeek, drop_count_out, entry_sequence_id_out);
+  Result<ConstByteSpan> peek_result =
+      multisink_->PeekOrPopEntry(*this,
+                                 buffer,
+                                 Request::kPeek,
+                                 drain_drop_count_out,
+                                 ingress_drop_count_out,
+                                 entry_sequence_id_out);
   if (!peek_result.ok()) {
     return peek_result.status();
   }
   return PeekedEntry(peek_result.value(), entry_sequence_id_out);
 }
 
-Result<ConstByteSpan> MultiSink::Drain::PopEntry(ByteSpan buffer,
-                                                 uint32_t& drop_count_out) {
+Result<ConstByteSpan> MultiSink::Drain::PopEntry(
+    ByteSpan buffer,
+    uint32_t& drain_drop_count_out,
+    uint32_t& ingress_drop_count_out) {
   PW_DCHECK_NOTNULL(multisink_);
   uint32_t entry_sequence_id_out;
-  return multisink_->PeekOrPopEntry(
-      *this, buffer, Request::kPop, drop_count_out, entry_sequence_id_out);
+  return multisink_->PeekOrPopEntry(*this,
+                                    buffer,
+                                    Request::kPop,
+                                    drain_drop_count_out,
+                                    ingress_drop_count_out,
+                                    entry_sequence_id_out);
 }
 
 }  // namespace multisink

@@ -13,44 +13,60 @@
 # the License.
 """pw_console preferences"""
 
-from dataclasses import dataclass, field
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Dict, Callable, List, Union
 
+from prompt_toolkit.key_binding import KeyBindings
 import yaml
 
 from pw_console.style import get_theme_colors
+from pw_console.key_bindings import DEFAULT_KEY_BINDINGS
+from pw_console.yaml_config_loader_mixin import YamlConfigLoaderMixin
 
 _DEFAULT_REPL_HISTORY: Path = Path.home() / '.pw_console_history'
 _DEFAULT_SEARCH_HISTORY: Path = Path.home() / '.pw_console_search'
 
 _DEFAULT_CONFIG = {
-    'pw_console': {
-        # History files
-        'repl_history': _DEFAULT_REPL_HISTORY,
-        'search_history': _DEFAULT_SEARCH_HISTORY,
-        # Appearance
-        'ui_theme': 'dark',
-        'code_theme': 'pigweed-code',
-        'swap_light_and_dark': False,
-        'spaces_between_columns': 2,
-        'column_order_omit_unspecified_columns': False,
-        'column_order': [],
-        'column_colors': {},
-        'show_python_file': False,
-        'show_python_logger': False,
-        'show_source_file': False,
-        'hide_date_from_log_time': False,
-        # Window arrangement
-        'windows': {},
-        'window_column_split_method': 'vertical',
+    # History files
+    'repl_history': _DEFAULT_REPL_HISTORY,
+    'search_history': _DEFAULT_SEARCH_HISTORY,
+    # Appearance
+    'ui_theme': 'dark',
+    'code_theme': 'pigweed-code',
+    'swap_light_and_dark': False,
+    'spaces_between_columns': 2,
+    'column_order_omit_unspecified_columns': False,
+    'column_order': [],
+    'column_colors': {},
+    'show_python_file': False,
+    'show_python_logger': False,
+    'show_source_file': False,
+    'hide_date_from_log_time': False,
+    # Window arrangement
+    'windows': {},
+    'window_column_split_method': 'vertical',
+    'command_runner': {
+        'width': 80,
+        'height': 10,
+        'position': {
+            'top': 3
+        },
     },
+    'key_bindings': DEFAULT_KEY_BINDINGS,
 }
+
+_DEFAULT_PROJECT_FILE = Path('$PW_PROJECT_ROOT/.pw_console.yaml')
+_DEFAULT_PROJECT_USER_FILE = Path('$PW_PROJECT_ROOT/.pw_console.user.yaml')
+_DEFAULT_USER_FILE = Path('$HOME/.pw_console.yaml')
 
 
 class UnknownWindowTitle(Exception):
     """Exception for window titles not present in the window manager layout."""
+
+
+class EmptyWindowList(Exception):
+    """Exception for window lists with no content."""
 
 
 def error_unknown_window(window_title: str,
@@ -75,52 +91,38 @@ def error_unknown_window(window_title: str,
         'https://pigweed.dev/pw_console/docs/user_guide.html#example-config')
 
 
-@dataclass
-class ConsolePrefs:
+def error_empty_window_list(window_list_title: str, ) -> None:
+    """Raise an error if a window list is empty."""
+
+    raise EmptyWindowList(
+        f'\n\nError: The window layout heading "{window_list_title}" contains '
+        'no windows.\n'
+        'See also: '
+        'https://pigweed.dev/pw_console/docs/user_guide.html#example-config')
+
+
+class ConsolePrefs(YamlConfigLoaderMixin):
     """Pigweed Console preferences storage class."""
 
-    project_file: Union[Path, bool] = Path('$PW_PROJECT_ROOT/.pw_console.yaml')
-    user_file: Union[Path, bool] = Path('$HOME/.pw_console.yaml')
-    _config: Dict[Any, Any] = field(default_factory=dict)
+    # pylint: disable=too-many-public-methods
 
-    def __post_init__(self) -> None:
-        self._update_config(_DEFAULT_CONFIG)
+    def __init__(
+        self,
+        project_file: Union[Path, bool] = _DEFAULT_PROJECT_FILE,
+        project_user_file: Union[Path, bool] = _DEFAULT_PROJECT_USER_FILE,
+        user_file: Union[Path, bool] = _DEFAULT_USER_FILE,
+    ) -> None:
+        self.config_init(
+            config_section_title='pw_console',
+            project_file=project_file,
+            project_user_file=project_user_file,
+            user_file=user_file,
+            default_config=_DEFAULT_CONFIG,
+            environment_var='PW_CONSOLE_CONFIG_FILE',
+        )
 
-        if self.project_file:
-            assert isinstance(self.project_file, Path)
-            self.project_file = Path(
-                os.path.expandvars(str(self.project_file.expanduser())))
-            self.load_config(self.project_file)
-
-        if self.user_file:
-            assert isinstance(self.user_file, Path)
-            self.user_file = Path(
-                os.path.expandvars(str(self.user_file.expanduser())))
-            self.load_config(self.user_file)
-
-        # Check for a config file specified by an environment variable.
-        environment_config = os.environ.get('PW_CONSOLE_CONFIG_FILE', None)
-        if environment_config:
-            env_file_path = Path(environment_config)
-            if not env_file_path.is_file():
-                raise FileNotFoundError(
-                    f'Cannot load config file: {env_file_path}')
-            self.reset_config()
-            self.load_config(env_file_path)
-
-    def _update_config(self, cfg: Dict[Any, Any]) -> None:
-        assert 'pw_console' in cfg
-        self._config.update(cfg.get('pw_console', {}))
-
-    def reset_config(self) -> None:
-        self._config = {}
-        self._update_config(_DEFAULT_CONFIG)
-
-    def load_config(self, file_path: Path) -> None:
-        if not file_path.is_file():
-            return
-        cfg = yaml.load(file_path.read_text(), Loader=yaml.Loader)
-        self._update_config(cfg)
+        self.registered_commands = DEFAULT_KEY_BINDINGS
+        self.registered_commands.update(self.user_key_bindings)
 
     @property
     def ui_theme(self) -> str:
@@ -136,6 +138,9 @@ class ConsolePrefs:
     @property
     def code_theme(self) -> str:
         return self._config.get('code_theme', '')
+
+    def set_code_theme(self, theme_name: str):
+        self._config['code_theme'] = theme_name
 
     @property
     def swap_light_and_dark(self) -> bool:
@@ -219,12 +224,74 @@ class ConsolePrefs:
         return list(column_type for column_type in self.windows.keys())
 
     @property
+    def command_runner_position(self) -> Dict[str, int]:
+        position = self._config.get('command_runner',
+                                    {}).get('position', {'top': 3})
+        return {
+            key: value
+            for key, value in position.items()
+            if key in ['top', 'bottom', 'left', 'right']
+        }
+
+    @property
+    def command_runner_width(self) -> int:
+        return self._config.get('command_runner', {}).get('width', 80)
+
+    @property
+    def command_runner_height(self) -> int:
+        return self._config.get('command_runner', {}).get('height', 10)
+
+    @property
+    def user_key_bindings(self) -> Dict[str, List[str]]:
+        return self._config.get('key_bindings', {})
+
+    def current_config_as_yaml(self) -> str:
+        yaml_options = dict(sort_keys=True,
+                            default_style='',
+                            default_flow_style=False)
+
+        title = {'config_title': 'pw_console'}
+        text = '\n'
+        text += yaml.safe_dump(title, **yaml_options)  # type: ignore
+
+        keys = {'key_bindings': self.registered_commands}
+        text += '\n'
+        text += yaml.safe_dump(keys, **yaml_options)  # type: ignore
+
+        return text
+
+    @property
     def unique_window_titles(self) -> set:
         titles = []
-        for column in self.windows.values():
+        for window_list_title, column in self.windows.items():
+            if not column:
+                error_empty_window_list(window_list_title)
+
             for window_key_title, window_dict in column.items():
                 window_options = window_dict if window_dict else {}
                 # Use 'duplicate_of: Title' if it exists, otherwise use the key.
                 titles.append(
                     window_options.get('duplicate_of', window_key_title))
         return set(titles)
+
+    def get_function_keys(self, name: str) -> List:
+        """Return the keys for the named function."""
+        try:
+            return self.registered_commands[name]
+        except KeyError as error:
+            raise KeyError('Unbound key function: {}'.format(name)) from error
+
+    def register_named_key_function(self, name: str,
+                                    default_bindings: List[str]) -> None:
+        self.registered_commands[name] = default_bindings
+
+    def register_keybinding(self, name: str, key_bindings: KeyBindings,
+                            **kwargs) -> Callable:
+        """Apply registered keys for the given named function."""
+        def decorator(handler: Callable) -> Callable:
+            "`handler` is a callable or Binding."
+            for keys in self.get_function_keys(name):
+                key_bindings.add(*keys.split(' '), **kwargs)(handler)
+            return handler
+
+        return decorator

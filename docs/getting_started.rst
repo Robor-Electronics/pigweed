@@ -102,7 +102,16 @@ Prerequisites
 
 Most Linux installations should work out of box, and not require any manual
 installation of prerequisites beyond basics like ``git`` and
-``build-essential``.  Make sure gcc is set to gcc-8.
+``build-essential`` (or the equivalent for your distro).
+
+.. inclusive-language: disable
+
+To flash devices using OpenOCD, you may need to extend your system udev rules
+at ``/etc/udev/rules.d/``. The OpenOCD repository has a good
+`example udev rules file <https://github.com/openocd-org/openocd/blob/master/contrib/60-openocd.rules>`_
+that includes many popular hardware debuggers.
+
+.. inclusive-language: enable
 
 **macOS**
 
@@ -254,8 +263,8 @@ the host automatically build and run the unit tests. Unit tests err on the side
 of being quiet in the success case, and only output test results when there's a
 failure.
 
-To see the a test failure, modify ``pw_status/status_test.cc`` to fail by
-changing one of the strings in the "KnownString" test.
+To see a test failure, modify ``pw_status/status_test.cc`` to fail by changing
+one of the strings in the "KnownString" test.
 
 .. image:: images/pw_watch_test_demo.gif
   :width: 800
@@ -270,7 +279,7 @@ Try running the ``pw_status`` test manually:
 
 .. code:: bash
 
-  $ ./out/host_{clang,gcc}_debug/obj/pw_status/test/status_test
+  $ ./out/pw_strict_host_{clang,gcc}_debug/obj/pw_status/test/status_test
 
 Depending on your host OS, the compiler will default to either ``clang`` or
 ``gcc``.
@@ -375,6 +384,35 @@ You can explicitly build just the documentation with the command below.
   $ ninja -C out docs
 
 This concludes the introduction to developing for upstream Pigweed.
+
+Building Tests Individually
+===========================
+Sometimes it's faster to incrementally build a single test target rather than
+waiting for the whole world to build and all tests to run. GN has a built-in
+tool, ``gn outputs``, that will translate a GN build step into a Ninja build
+step. In order to build and run the right test, it's important to explicitly
+specify which target to build the test under (e.g. host, SM32F529I-DISC1).
+This can be done by appending the GN path to the target toolchain in parenthesis
+after the desired GN build step label as seen in the example below.
+
+.. code:: none
+
+  $ gn outputs out "//pw_status:status_test.run(//targets/host/pigweed_internal:pw_strict_host_clang_debug)"
+  pw_strict_host_clang_debug/gen/pw_status/status_test.run.pw_pystamp
+
+  $ ninja -C out pw_strict_host_clang_debug/gen/pw_status/status_test.run.pw_pystamp
+  ninja: Entering directory `out'
+  [4/4] ACTION //pw_status:status_test.run(//targets/host/pigweed_internal:pw_strict_host_clang_debug)
+
+The ``.run`` following the test target name is a sub-target created as part of
+the ``pw_test`` GN template. If you remove ``.run``, the test will build but
+not attempt to run.
+
+In macOS and Linux, ``xargs`` can be used to turn this into a single command:
+
+.. code:: bash
+
+  $ gn outputs out "//pw_status:status_test.run(//targets/host/pigweed_internal:pw_strict_host_clang_debug)" | xargs ninja -C out
 
 Next steps
 ==========

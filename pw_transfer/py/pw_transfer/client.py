@@ -1,4 +1,4 @@
-# Copyright 2021 The Pigweed Authors
+# Copyright 2022 The Pigweed Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not
 # use this file except in compliance with the License. You may obtain a copy of
@@ -23,7 +23,11 @@ from pw_status import Status
 
 from pw_transfer.transfer import (ProgressCallback, ReadTransfer, Transfer,
                                   WriteTransfer)
-from pw_transfer.transfer_pb2 import Chunk
+try:
+    from pw_transfer import transfer_pb2
+except ImportError:
+    # For the bazel build, which puts generated protos in a different location.
+    from pigweed.pw_transfer import transfer_pb2  # type: ignore
 
 _LOG = logging.getLogger(__package__)
 
@@ -70,6 +74,9 @@ class Manager:  # pylint: disable=too-many-instance-attributes
         self._write_stream: Optional[BidirectionalStreamingCall] = None
 
         self._loop = asyncio.new_event_loop()
+        # If constructed from non-main thread, set the event loop.
+        if threading.current_thread() is not threading.main_thread():
+            asyncio.set_event_loop(self._loop)
 
         # Queues are used for communication between the Manager context and the
         # dedicated asyncio transfer thread.
@@ -91,7 +98,7 @@ class Manager:  # pylint: disable=too-many-instance-attributes
             self._thread.join()
 
     def read(self,
-             transfer_id: int,
+             session_id: int,
              progress_callback: ProgressCallback = None) -> bytes:
         """Receives ("downloads") data from the server.
 
@@ -99,10 +106,10 @@ class Manager:  # pylint: disable=too-many-instance-attributes
           Error: the transfer failed to complete
         """
 
-        if transfer_id in self._read_transfers:
-            raise ValueError(f'Read transfer {transfer_id} already exists')
+        if session_id in self._read_transfers:
+            raise ValueError(f'Read transfer {session_id} already exists')
 
-        transfer = ReadTransfer(transfer_id,
+        transfer = ReadTransfer(session_id,
                                 self._send_read_chunk,
                                 self._end_read_transfer,
                                 self._default_response_timeout_s,
@@ -119,13 +126,13 @@ class Manager:  # pylint: disable=too-many-instance-attributes
         return transfer.data
 
     def write(self,
-              transfer_id: int,
+              session_id: int,
               data: Union[bytes, str],
               progress_callback: ProgressCallback = None) -> None:
         """Transmits ("uploads") data to the server.
 
         Args:
-          transfer_id: ID of the write transfer
+          session_id: ID of the write transfer
           data: Data to send to the server.
           progress_callback: Optional callback periodically invoked throughout
               the transfer with the transfer state. Can be used to provide user-
@@ -138,10 +145,10 @@ class Manager:  # pylint: disable=too-many-instance-attributes
         if isinstance(data, str):
             data = data.encode()
 
-        if transfer_id in self._write_transfers:
-            raise ValueError(f'Write transfer {transfer_id} already exists')
+        if session_id in self._write_transfers:
+            raise ValueError(f'Write transfer {session_id} already exists')
 
-        transfer = WriteTransfer(transfer_id,
+        transfer = WriteTransfer(session_id,
                                  data,
                                  self._send_write_chunk,
                                  self._end_write_transfer,
@@ -156,11 +163,11 @@ class Manager:  # pylint: disable=too-many-instance-attributes
         if not transfer.status.ok():
             raise Error(transfer.id, transfer.status)
 
-    def _send_read_chunk(self, chunk: Chunk) -> None:
+    def _send_read_chunk(self, chunk: transfer_pb2.Chunk) -> None:
         assert self._read_stream is not None
         self._read_stream.send(chunk)
 
-    def _send_write_chunk(self, chunk: Chunk) -> None:
+    def _send_write_chunk(self, chunk: transfer_pb2.Chunk) -> None:
         assert self._write_stream is not None
         self._write_stream.send(chunk)
 
@@ -216,7 +223,8 @@ class Manager:  # pylint: disable=too-many-instance-attributes
         self._loop.stop()
 
     @staticmethod
-    async def _handle_chunk(transfers: _TransferDict, chunk: Chunk) -> None:
+    async def _handle_chunk(transfers: _TransferDict,
+                            chunk: transfer_pb2.Chunk) -> None:
         """Processes an incoming chunk from a stream.
 
         The chunk is dispatched to an active transfer based on its ID. If the
@@ -347,7 +355,7 @@ class Error(Exception):
 
     Stores the ID of the failed transfer and the error that occurred.
     """
-    def __init__(self, transfer_id: int, status: Status):
-        super().__init__(f'Transfer {transfer_id} failed with status {status}')
-        self.transfer_id = transfer_id
+    def __init__(self, session_id: int, status: Status):
+        super().__init__(f'Transfer {session_id} failed with status {status}')
+        self.session_id = session_id
         self.status = status

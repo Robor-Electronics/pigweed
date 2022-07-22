@@ -29,13 +29,13 @@ void StringBuilder::clear() {
 }
 
 StringBuilder& StringBuilder::append(size_t count, char ch) {
-  const auto append_destination = buffer_.begin() + size_;
+  char* const append_destination = buffer_.data() + size_;
   std::fill_n(append_destination, ResizeAndTerminate(count), ch);
   return *this;
 }
 
 StringBuilder& StringBuilder::append(const char* str, size_t count) {
-  const auto append_destination = buffer_.begin() + size_;
+  char* const append_destination = buffer_.data() + size_;
   std::copy_n(str, ResizeAndTerminate(count), append_destination);
   return *this;
 }
@@ -100,7 +100,7 @@ StringBuilder& StringBuilder::FormatVaList(const char* format, va_list args) {
   return *this;
 }
 
-void StringBuilder::WriteBytes(std::span<const std::byte> data) {
+void StringBuilder::WriteBytes(span<const std::byte> data) {
   if (size() + data.size() * 2 > max_size()) {
     SetErrorStatus(Status::ResourceExhausted());
   } else {

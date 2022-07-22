@@ -14,10 +14,10 @@
 
 #include "pw_unit_test/unit_test_service.h"
 
+#include "gtest/gtest.h"
 #include "pw_containers/vector.h"
 #include "pw_log/log.h"
 #include "pw_protobuf/decoder.h"
-#include "pw_unit_test/framework.h"
 
 namespace pw::unit_test {
 
@@ -68,17 +68,7 @@ void UnitTestService::Run(ConstByteSpan request, RawServerWriter& writer) {
   }
 
   PW_LOG_INFO("Starting unit test run");
-
-  RegisterEventHandler(&handler_);
-  SetTestSuitesToRun(suites_to_run);
-  PW_LOG_DEBUG("%u test suite filters applied",
-               static_cast<unsigned>(suites_to_run.size()));
-
-  RUN_ALL_TESTS();
-
-  RegisterEventHandler(nullptr);
-  SetTestSuitesToRun({});
-
+  handler_.ExecuteTests(suites_to_run);
   PW_LOG_INFO("Unit test run complete");
 
   writer_.Finish().IgnoreError();  // TODO(pwbug/387): Handle Status properly

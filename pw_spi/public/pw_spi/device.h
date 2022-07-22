@@ -92,7 +92,8 @@ class Device {
       if ((selector_ != nullptr) &&
           (behavior_ == ChipSelectBehavior::kPerTransaction) &&
           (!first_write_read_)) {
-        selector_->Deactivate();
+        selector_->Deactivate()
+            .IgnoreError();  // TODO(pwbug/387): Handle Status properly
       }
     }
 
@@ -104,7 +105,7 @@ class Device {
           behavior_(other.behavior_),
           first_write_read_(other.first_write_read_) {
       other.selector_ = nullptr;
-    };
+    }
 
     Transaction& operator=(Transaction&& other) {
       initiator_ = std::move(other.initiator_);

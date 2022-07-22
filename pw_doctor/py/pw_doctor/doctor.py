@@ -135,6 +135,19 @@ def pw_plugins(ctx: DoctorContext):
         ctx.error('Not all pw plugins loaded successfully')
 
 
+def unames_are_equivalent(uname_actual: str, uname_expected: str) -> bool:
+    """Determine if uname values are equivalent for this tool's purposes."""
+
+    # Support `mac-arm64` through Rosetta until `mac-arm64` binaries are ready
+    # Expected and actual unames will not literally match on M1 Macs because
+    # they pretend to be Intel Macs for the purpose of environment setup. But
+    # that's intentional and doesn't require any user action.
+    if "Darwin" in uname_expected and "arm64" in uname_expected:
+        uname_expected = uname_expected.replace("arm64", "x86_64")
+
+    return uname_actual == uname_expected
+
+
 @register_into(CHECKS)
 def env_os(ctx: DoctorContext):
     """Check that the environment matches this machine."""
@@ -156,7 +169,7 @@ def env_os(ctx: DoctorContext):
     # redundant because it's contained in release or version, and
     # skipping it here simplifies logic.
     uname = ' '.join(getattr(os, 'uname', lambda: ())()[2:])
-    if data['uname'] != uname:
+    if not unames_are_equivalent(uname, data['uname']):
         ctx.warning(
             'Current uname (%s) does not match Bootstrap uname (%s), '
             'you may need to rerun bootstrap on this system', uname,
@@ -201,9 +214,7 @@ def python_version(ctx: DoctorContext):
     """Check the Python version is correct."""
     actual = sys.version_info
     expected = (3, 8)
-    latest = (3, 9)
-    if (actual[0:2] < expected or actual[0] != expected[0]
-            or actual[0:2] > latest):
+    if actual[0:2] < expected or actual[0] != expected[0]:
         # If we get the wrong version but it still came from CIPD print a
         # warning but give it a pass.
         if 'chromium' in sys.version:
@@ -289,35 +300,56 @@ def cipd_versions(ctx: DoctorContext):
     if os.environ.get('PW_DOCTOR_SKIP_CIPD_CHECKS'):
         return
 
-    try:
-        root = pathlib.Path(os.environ['PW_ROOT']).resolve()
-    except KeyError:
-        return  # This case is handled elsewhere.
-
     if 'PW_CIPD_INSTALL_DIR' not in os.environ:
         ctx.error('PW_CIPD_INSTALL_DIR not set')
     cipd_dir = pathlib.Path(os.environ['PW_CIPD_INSTALL_DIR'])
 
-    # Deliberately not checking luci.json--it's not required to be up-to-date.
-    json_paths = (
-        root.joinpath('pw_env_setup', 'py', 'pw_env_setup', 'cipd_setup',
-                      'pigweed.json'),
-        root.joinpath('pw_env_setup', 'py', 'pw_env_setup', 'cipd_setup',
-                      'bazel.json'),
-    )
+    with open(cipd_dir / '_all_package_files.json', 'r') as ins:
+        json_paths = [pathlib.Path(x) for x in json.load(ins)]
 
-    def check_cipd(package, versions_path):
+    platform = cipd_update.platform()
+
+    def check_cipd(package, install_path):
+        if platform not in package['platforms']:
+            ctx.debug("skipping %s because it doesn't apply to %s",
+                      package['path'], platform)
+            return
+
+        tags_without_refs = [x for x in package['tags'] if ':' in x]
+        if not tags_without_refs:
+            ctx.debug('skipping %s because it tracks a ref, not a tag (%s)',
+                      package['path'], ', '.join(package['tags']))
+            return
+
         ctx.debug('checking version of %s', package['path'])
+
         name = [
             part for part in package['path'].split('/') if '{' not in part
         ][-1]
-        path = versions_path.joinpath(f'{name}.cipd_version')
+
+        # If the exact path is specified in the JSON file use it, and require it
+        # exist.
+        if 'version_file' in package:
+            path = install_path / package['version_file']
+            notify_method = ctx.error
+        # Otherwise, follow a heuristic to find the file but don't require the
+        # file to exist.
+        else:
+            path = install_path / '.versions' / f'{name}.cipd_version'
+            notify_method = ctx.debug
+
+        # Check if a .exe cipd_version exists on Windows.
+        path_windows = install_path / '.versions' / f'{name}.exe.cipd_version'
+        if os.name == 'nt' and path_windows.is_file():
+            path = path_windows
+
         if not path.is_file():
-            ctx.debug(f'no version file for {name} at {path}')
+            notify_method(f'no version file for {name} at {path}')
             return
 
         with path.open() as ins:
             installed = json.load(ins)
+        ctx.debug(f'found version file for {name} at {path}')
 
         describe = (
             'cipd',
@@ -334,15 +366,25 @@ def cipd_versions(ctx: DoctorContext):
         for tag in package['tags']:
             if tag not in output:
                 ctx.error(
-                    'CIPD package %s is out of date, please rerun bootstrap',
-                    installed['package_name'])
+                    'CIPD package %s in %s is out of date, please rerun '
+                    'bootstrap', installed['package_name'], install_path)
+
+            else:
+                ctx.debug('CIPD package %s in %s is current',
+                          installed['package_name'], install_path)
 
     for json_path in json_paths:
-        versions_path = pathlib.Path(
-            cipd_update.package_installation_path(cipd_dir,
-                                                  json_path)) / '.versions'
+        ctx.debug(f'Checking packages in {json_path}')
+        if not json_path.exists():
+            ctx.error(
+                'CIPD package file %s may have been deleted, please '
+                'rerun bootstrap', json_path)
+            continue
+
+        install_path = pathlib.Path(
+            cipd_update.package_installation_path(cipd_dir, json_path))
         for package in json.loads(json_path.read_text()).get('packages', ()):
-            ctx.submit(check_cipd, package, versions_path)
+            ctx.submit(check_cipd, package, install_path)
 
 
 @register_into(CHECKS)
@@ -388,7 +430,7 @@ def run_doctor(strict=False, checks=None):
             "Your environment setup has completed, but something isn't right "
             'and some things may not work correctly. You may continue with '
             'development, but please seek support at '
-            'https://bugs.pigweed.dev/ or by reaching out to your team.')
+            'https://bugs.pigweed.dev/new or by reaching out to your team.')
     else:
         doctor.log.info('Environment passes all checks!')
     return len(doctor.failures)

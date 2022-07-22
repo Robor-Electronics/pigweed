@@ -43,11 +43,11 @@ at a time:
 
 Optionally tokenized text fields
 --------------------------------
-Several fields in the ``pw_log`` proto store text. Examples include ``message``
-and ``thread_name``. These fields may contain either plain or tokenized text,
-either of which is represented as a single bytes field. These fields are marked
-with a protocol buffer option so the ``pw_tokenizer.proto`` module can detect
-and detokenize tokenized fields as appropriate.
+Several fields in the ``pw_log`` proto store text. Examples include ``message``,
+``module``, and ``thread``. These fields may contain either plain or tokenized
+text, either of which is represented as a single bytes field. These fields are
+marked with a protocol buffer option so the ``pw_tokenizer.proto`` module can
+detect and detokenize tokenized fields as appropriate.
 
 See :ref:`module-pw_tokenizer-proto` for details.
 
@@ -100,7 +100,7 @@ for encoding tokenized logs and string-based logs.
 
      Result<ConstByteSpan> result = EncodeTokenizedLog(
          metadata,
-         std::as_bytes(std::span(data, size)),
+         pw::as_bytes(pw::span(data, size)),
          log_buffer);
      if (result.ok()) {
        // This makes use of the encoded log proto and is custom per-product.

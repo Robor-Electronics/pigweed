@@ -1,4 +1,4 @@
-// Copyright 2021 The Pigweed Authors
+// Copyright 2022 The Pigweed Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not
 // use this file except in compliance with the License. You may obtain a copy of
@@ -18,11 +18,10 @@
 #include "pw_function/function.h"
 #include "pw_status/status.h"
 #include "pw_stream/stream.h"
-#include "pw_sync/lock_annotations.h"
-#include "pw_sync/mutex.h"
 #include "pw_transfer/internal/client_context.h"
+#include "pw_transfer/internal/config.h"
 #include "pw_transfer/transfer.raw_rpc.pb.h"
-#include "pw_work_queue/work_queue.h"
+#include "pw_transfer/transfer_thread.h"
 
 namespace pw::transfer {
 
@@ -55,69 +54,65 @@ class Client {
   // recover.
   Client(rpc::Client& rpc_client,
          uint32_t channel_id,
-         work_queue::WorkQueue& work_queue,
-         ByteSpan transfer_data_buffer,
-         size_t max_bytes_to_receive = 0)
+         TransferThread& transfer_thread,
+         size_t max_bytes_to_receive = 0,
+         uint32_t extend_window_divisor = cfg::kDefaultExtendWindowDivisor)
       : client_(rpc_client, channel_id),
-        work_queue_(work_queue),
-        max_parameters_(max_bytes_to_receive > 0 ? max_bytes_to_receive
-                                                 : transfer_data_buffer.size(),
-                        transfer_data_buffer.size()),
-        chunk_data_buffer_(transfer_data_buffer) {}
+        transfer_thread_(transfer_thread),
+        max_parameters_(max_bytes_to_receive > 0
+                            ? max_bytes_to_receive
+                            : transfer_thread.max_chunk_size(),
+                        transfer_thread.max_chunk_size(),
+                        extend_window_divisor),
+        has_read_stream_(false),
+        has_write_stream_(false) {}
 
-  // Begins a new read transfer for the given transfer ID. The data read from
+  // Begins a new read transfer for the given resource ID. The data read from
   // the server is written to the provided writer. Returns OK if the transfer is
   // successfully started. When the transfer finishes (successfully or not), the
   // completion callback is invoked with the overall status.
   Status Read(
-      uint32_t transfer_id,
+      uint32_t resource_id,
       stream::Writer& output,
       CompletionFunc&& on_completion,
       chrono::SystemClock::duration timeout = cfg::kDefaultChunkTimeout);
 
-  // Begins a new write transfer for the given transfer ID. Data from the
+  // Begins a new write transfer for the given resource ID. Data from the
   // provided reader is sent to the server. When the transfer finishes
   // (successfully or not), the completion callback is invoked with the overall
   // status.
   Status Write(
-      uint32_t transfer_id,
+      uint32_t resource_id,
       stream::Reader& input,
       CompletionFunc&& on_completion,
       chrono::SystemClock::duration timeout = cfg::kDefaultChunkTimeout);
 
+  // Terminates an ongoing transfer for the specified resource ID.
+  //
+  // TODO(frolv): This should not take a resource_id, but a handle to an active
+  // transfer session.
+  void CancelTransfer(uint32_t resource_id);
+
+  Status set_extend_window_divisor(uint32_t extend_window_divisor) {
+    if (extend_window_divisor <= 1) {
+      return Status::InvalidArgument();
+    }
+
+    max_parameters_.set_extend_window_divisor(extend_window_divisor);
+    return OkStatus();
+  }
+
  private:
   using Transfer = pw_rpc::raw::Transfer;
-  using ClientContext = internal::ClientContext;
 
-  enum Type : bool { kRead, kWrite };
-
-  Status StartNewTransfer(uint32_t transfer_id,
-                          Type type,
-                          stream::Stream& stream,
-                          CompletionFunc&& on_completion,
-                          chrono::SystemClock::duration timeout);
-
-  ClientContext* GetTransferById(uint32_t transfer_id);
-
-  // Function called when a chunk is received, from the context of the RPC
-  // client thread.
-  void OnChunk(ConstByteSpan data, Type type);
+  void OnRpcError(Status status, internal::TransferType type);
 
   Transfer::Client client_;
-  work_queue::WorkQueue& work_queue_;
-
-  rpc::RawClientReaderWriter read_stream_;
-  rpc::RawClientReaderWriter write_stream_;
-
-  // TODO(frolv): Make this size configurable.
-  std::array<ClientContext, 1> transfer_contexts_
-      PW_GUARDED_BY(transfer_context_mutex_);
-  sync::Mutex transfer_context_mutex_;
-
+  TransferThread& transfer_thread_;
   internal::TransferParameters max_parameters_;
-  internal::ChunkDataBuffer chunk_data_buffer_;
 
-  internal::EncodingBuffer encoding_buffer_;
+  bool has_read_stream_;
+  bool has_write_stream_;
 };
 
 }  // namespace pw::transfer

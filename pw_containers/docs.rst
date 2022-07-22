@@ -18,6 +18,61 @@ size in a variable. This allows Vectors to be used without having to know
 their maximum size at compile time. It also keeps code size small since
 function implementations are shared for all maximum sizes.
 
+pw::Vector<char>
+----------------
+As a variable length type with a fixed-size buffer, ``Vector<char>`` makes a
+useful lightweight container for strings, avoiding the computation and bug-prone
+nature of null-termination, and overhead of ``pw::StringBuffer`` for long-term
+storage.
+
+To facilitate this use, ``Vector<char>`` may be initialized from a
+``const char*`` or  ``std::string_view``, and provides a ``view()`` method
+and conversion operator to obtain a ``std::string_view`` over the character
+data.
+
+.. code:: c++
+
+  // Initialize from string.
+  pw::Vector<char, 32> greeting = "Hello";
+
+.. code:: c++
+
+  // Initialize as part of an aggregate
+  struct Person {
+    pw::Vector<char, 32> name;
+    int age;
+  };
+
+  Person bob = {
+    .name = "Bob",
+    .age = 42;
+  };
+
+.. code:: c++
+
+  // Initialize using std::string_view conversion from pw::StringBuffer
+  pw::StringBuffer<150> buffer;
+  buffer << "Hello";
+  pw::Vector<char, 32> greeting = buffer;
+
+  // Or use conversion to std::string_view to add to a buffer.
+  buffer << " " << person.name;
+
+Since the internal array is not null-terminated, to use the string in code that
+expects that, :ref:`module-pw_string` provides a version of ``pw::string::Copy``
+that takes a vector as a source.
+
+.. code:: c++
+
+  #include "pw_containers/vector.h"
+  #include "pw_string/vector.h"
+
+  pw::Vector<char, 32> greeting = "Hello";
+  char c_str[33];
+
+  pw::string::Copy(greeting, c_str);
+  printf("%s\n", greeting);
+
 pw::IntrusiveList
 =================
 IntrusiveList provides an embedded-friendly singly-linked intrusive list
@@ -185,7 +240,125 @@ pw::containers::to_array
 ========================
 ``pw::containers::to_array`` is a C++14-compatible implementation of C++20's
 `std::to_array <https://en.cppreference.com/w/cpp/container/array/to_array>`_.
-It converts a C array to a ``std::array``.
+In C++20, it is an alias for ``std::to_array``. It converts a C array to a
+``std::array``.
+
+pw_containers/algorithm.h
+=========================
+Pigweed provides a set of Container-based versions of algorithmic functions
+within the C++ standard library, based on a subset of
+``absl/algorithm/container.h``.
+
+.. cpp:function:: bool pw::containers::AllOf()
+
+  Container-based version of the <algorithm> ``std::all_of()`` function to
+  test if all elements within a container satisfy a condition.
+
+
+.. cpp:function:: bool pw::containers::AnyOf()
+
+  Container-based version of the <algorithm> ``std::any_of()`` function to
+  test if any element in a container fulfills a condition.
+
+
+.. cpp:function:: bool pw::containers::NoneOf()
+
+  Container-based version of the <algorithm> ``std::none_of()`` function to
+  test if no elements in a container fulfill a condition.
+
+
+.. cpp:function:: pw::containers::ForEach()
+
+  Container-based version of the <algorithm> ``std::for_each()`` function to
+  apply a function to a container's elements.
+
+
+.. cpp:function:: pw::containers::Find()
+
+  Container-based version of the <algorithm> ``std::find()`` function to find
+  the first element containing the passed value within a container value.
+
+
+.. cpp:function:: pw::containers::FindIf()
+
+  Container-based version of the <algorithm> ``std::find_if()`` function to find
+  the first element in a container matching the given condition.
+
+
+.. cpp:function:: pw::containers::FindIfNot()
+
+  Container-based version of the <algorithm> ``std::find_if_not()`` function to
+  find the first element in a container not matching the given condition.
+
+
+.. cpp:function:: pw::containers::FindEnd()
+
+  Container-based version of the <algorithm> ``std::find_end()`` function to
+  find the last subsequence within a container.
+
+
+.. cpp:function:: pw::containers::FindFirstOf()
+
+  Container-based version of the <algorithm> ``std::find_first_of()`` function
+  to find the first element within the container that is also within the options
+  container.
+
+
+.. cpp:function:: pw::containers::AdjacentFind()
+
+  Container-based version of the <algorithm> ``std::adjacent_find()`` function
+  to find equal adjacent elements within a container.
+
+
+.. cpp:function:: pw::containers::Count()
+
+  Container-based version of the <algorithm> ``std::count()`` function to count
+  values that match within a container.
+
+
+.. cpp:function:: pw::containers::CountIf()
+
+  Container-based version of the <algorithm> ``std::count_if()`` function to
+  count values matching a condition within a container.
+
+
+.. cpp:function:: pw::containers::Mismatch()
+
+  Container-based version of the <algorithm> ``std::mismatch()`` function to
+  return the first element where two ordered containers differ. Applies ``==``
+  to the first ``N`` elements of ``c1`` and ``c2``, where
+  ``N = min(size(c1), size(c2)).`` the function's test condition. Applies
+  ``pred`` to the first N elements of ``c1``  and ``c2``, where
+  ``N = min(size(c1), size(c2))``.
+
+
+.. cpp:function:: bool pw::containers::Equal()
+
+  Container-based version of the <algorithm> ``std::equal()`` function to
+  test whether two containers are equal.
+
+  .. Note:: The semantics of ``Equal()`` are slightly different than those of
+    ``std::equal()``: while the latter iterates over the second container only
+    up to the size of the first container, ``Equal()`` also checks whether the
+    container sizes are equal.  This better matches expectations about
+    ``Equal()`` based on its signature.
+
+.. cpp:function:: bool pw::containers::IsPermutation()
+
+  Container-based version of the <algorithm> ``std::is_permutation()`` function
+  to test whether a container is a permutation of another.
+
+
+.. cpp:function:: pw::containers::Search()
+
+  Container-based version of the <algorithm> ``std::search()`` function to
+  search a container for a subsequence.
+
+
+.. cpp:function:: pw::containers::SearchN()
+
+  Container-based version of the <algorithm> ``std::search_n()`` function to
+  search a container for the first sequence of N elements.
 
 Compatibility
 =============

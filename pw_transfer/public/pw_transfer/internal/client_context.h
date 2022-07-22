@@ -13,71 +13,24 @@
 // the License.
 #pragma once
 
-#include <variant>
-
-#include "pw_assert/assert.h"
 #include "pw_function/function.h"
 #include "pw_rpc/raw/client_reader_writer.h"
-#include "pw_stream/stream.h"
 #include "pw_transfer/internal/context.h"
 
-namespace pw::transfer {
+namespace pw::transfer::internal {
 
-class Client;
-
-namespace internal {
-
-class ClientContext : public Context {
+class ClientContext final : public Context {
  public:
-  ClientContext()
-      : internal::Context(OnCompletion),
-        client_(nullptr),
-        on_completion_(nullptr) {}
+  constexpr ClientContext() : on_completion_(nullptr) {}
 
-  constexpr bool is_read_transfer() const { return type() == kReceive; }
-  constexpr bool is_write_transfer() const { return type() == kTransmit; }
-
-  Client& client() {
-    PW_DASSERT(active());
-    return *client_;
-  }
-
-  void StartRead(Client& client,
-                 uint32_t transfer_id,
-                 work_queue::WorkQueue& work_queue,
-                 EncodingBuffer& encoding_buffer,
-                 stream::Writer& writer,
-                 rpc::RawClientReaderWriter& stream,
-                 Function<void(Status)>&& on_completion,
-                 chrono::SystemClock::duration chunk_timeout);
-
-  void StartWrite(Client& client,
-                  uint32_t transfer_id,
-                  work_queue::WorkQueue& work_queue,
-                  EncodingBuffer& encoding_buffer,
-                  stream::Reader& reader,
-                  rpc::RawClientReaderWriter& stream,
-                  Function<void(Status)>&& on_completion,
-                  chrono::SystemClock::duration chunk_timeout);
-
-  void Finish(Status status) {
-    PW_DASSERT(active());
-    set_transfer_state(TransferState::kCompleted);
-    if (on_completion_ != nullptr) {
-      on_completion_(status);
-    }
-    client_ = nullptr;
+  void set_on_completion(Function<void(Status)>&& on_completion) {
+    on_completion_ = std::move(on_completion);
   }
 
  private:
-  static Status OnCompletion(Context& ctx, Status status) {
-    static_cast<ClientContext&>(ctx).Finish(status);
-    return OkStatus();
-  }
+  Status FinalCleanup(Status status) override;
 
-  Client* client_;
   Function<void(Status)> on_completion_;
 };
 
-}  // namespace internal
-}  // namespace pw::transfer
+}  // namespace pw::transfer::internal

@@ -14,16 +14,16 @@
 
 package dev.pigweed.pw_rpc;
 
-// import com.google.common.flogger.FluentLogger;
 import com.google.protobuf.MessageLite;
+import dev.pigweed.pw_log.Logger;
 import java.util.HashMap;
 import java.util.Map;
 import javax.annotation.Nullable;
 
 /** Tracks the state of service method invocations. */
 public class RpcManager {
-  // TODO(pwbug/611): Restore logging without a mandatory Flogger dependency.
-  // private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+  private static final Logger logger = Logger.forClass(RpcManager.class);
+
   private final Map<PendingRpc, StreamObserverCall<?, ?>> pending = new HashMap<>();
 
   /**
@@ -37,27 +37,20 @@ public class RpcManager {
   public synchronized StreamObserverCall<?, ?> start(
       PendingRpc rpc, StreamObserverCall<?, ?> call, @Nullable MessageLite payload)
       throws ChannelOutputException {
-    // logger.atFine().log("Start %s", rpc);
+    logger.atFine().log("%s starting", rpc);
     rpc.channel().send(Packets.request(rpc, payload));
     return pending.put(rpc, call);
   }
 
   /**
-   * Invokes an RPC, but ignores errors and keeps the RPC active if the invocation fails.
+   * Listens to responses to an RPC without sending a request.
    *
    * <p>The RPC remains open until it is closed by the server (either with a response or error
    * packet) or cancelled.
    */
   @Nullable
-  public synchronized StreamObserverCall<?, ?> open(
-      PendingRpc rpc, StreamObserverCall<?, ?> call, @Nullable MessageLite payload) {
-    // logger.atFine().log("Open %s", rpc);
-    try {
-      rpc.channel().send(Packets.request(rpc, payload));
-    } catch (ChannelOutputException e) {
-      // logger.atFine().withCause(e).log(
-      //    "Ignoring error opening %s; listening for unrequested responses", rpc);
-    }
+  public synchronized StreamObserverCall<?, ?> open(PendingRpc rpc, StreamObserverCall<?, ?> call) {
+    logger.atFine().log("%s opening", rpc);
     return pending.put(rpc, call);
   }
 
@@ -67,10 +60,18 @@ public class RpcManager {
       throws ChannelOutputException {
     StreamObserverCall<?, ?> call = pending.remove(rpc);
     if (call != null) {
-      // logger.atFine().log("Cancel %s", rpc);
+      logger.atFine().log("%s was cancelled", rpc);
       rpc.channel().send(Packets.cancel(rpc));
     }
     return call;
+  }
+
+  /** Cancels an ongoing RPC without sending a cancellation packet. */
+  public synchronized void abandon(PendingRpc rpc) {
+    StreamObserverCall<?, ?> call = pending.remove(rpc);
+    if (call != null) {
+      logger.atFine().log("%s was abandoned", rpc);
+    }
   }
 
   @Nullable
@@ -88,6 +89,7 @@ public class RpcManager {
       throws ChannelOutputException {
     StreamObserverCall<?, ?> call = pending.get(rpc);
     if (call != null) {
+      logger.atFiner().log("%s client stream closed", rpc);
       rpc.channel().send(Packets.clientStreamEnd(rpc));
     }
     return call;
@@ -95,11 +97,7 @@ public class RpcManager {
 
   @Nullable
   public synchronized StreamObserverCall<?, ?> clear(PendingRpc rpc) {
-    StreamObserverCall<?, ?> call = pending.remove(rpc);
-    if (call != null) {
-      // logger.atFine().log("Clear %s", rpc);
-    }
-    return call;
+    return pending.remove(rpc);
   }
 
   @Nullable

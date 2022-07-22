@@ -20,6 +20,11 @@ label_flag(
 )
 
 label_flag(
+    name = "pw_log_string_handler_backend",
+    build_setting_default = "@pigweed//pw_log_string:handler_backend_multiplexer",
+)
+
+label_flag(
     name = "pw_assert_backend",
     build_setting_default = "@pigweed//pw_assert:backend_multiplexer",
 )
@@ -65,6 +70,11 @@ label_flag(
 )
 
 label_flag(
+    name = "pw_sync_recursive_mutex_backend",
+    build_setting_default = "@pigweed//pw_sync:recursive_mutex_backend_multiplexer",
+)
+
+label_flag(
     name = "pw_sync_interrupt_spin_lock_backend",
     build_setting_default = "@pigweed//pw_sync:interrupt_spin_lock_backend_multiplexer",
 )
@@ -72,6 +82,11 @@ label_flag(
 label_flag(
     name = "pw_sync_thread_notification_backend",
     build_setting_default = "@pigweed//pw_sync:thread_notification_backend_multiplexer",
+)
+
+label_flag(
+    name = "pw_sync_timed_thread_notification_backend",
+    build_setting_default = "@pigweed//pw_sync:timed_thread_notification_backend_multiplexer",
 )
 
 label_flag(
@@ -117,6 +132,11 @@ label_flag(
 label_flag(
     name = "pw_sys_io_backend",
     build_setting_default = "@pigweed//pw_sys_io:backend_multiplexer",
+)
+
+label_flag(
+    name = "pw_unit_test_googletest_backend",
+    build_setting_default = "@pigweed//pw_unit_test:light",
 )
 
 label_flag(

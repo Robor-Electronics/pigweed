@@ -15,9 +15,8 @@
 // Configuration macros for the transfer module.
 #pragma once
 
-#include <array>
+#include <chrono>
 #include <cinttypes>
-#include <cstddef>
 #include <limits>
 
 #include "pw_chrono/system_clock.h"
@@ -28,43 +27,37 @@
 #define PW_TRANSFER_DEFAULT_MAX_RETRIES 3
 #endif  // PW_TRANSFER_DEFAULT_MAX_RETRIES
 
+static_assert(PW_TRANSFER_DEFAULT_MAX_RETRIES > 0 &&
+              PW_TRANSFER_DEFAULT_MAX_RETRIES <=
+                  std::numeric_limits<uint8_t>::max());
+
 // The default amount of time, in milliseconds, to wait for a chunk to arrive
 // before retrying. This can later be configured per-transfer.
 #ifndef PW_TRANSFER_DEFAULT_TIMEOUT_MS
 #define PW_TRANSFER_DEFAULT_TIMEOUT_MS 2000
 #endif  // PW_TRANSFER_DEFAULT_TIMEOUT_MS
 
-// The size of buffer to allocate in the transfer service/client.
-// TODO(pwbug/613): Use a different means to provide a buffer.
-#ifndef PW_TRANSFER_ENCODING_BUFFER_SIZE_BYTES
-#define PW_TRANSFER_ENCODING_BUFFER_SIZE_BYTES 512
-#endif  // PW_TRANSFER_ENCODING_BUFFER_SIZE_BYTES
-
-static_assert(PW_TRANSFER_DEFAULT_MAX_RETRIES > 0 &&
-              PW_TRANSFER_DEFAULT_MAX_RETRIES <=
-                  std::numeric_limits<uint8_t>::max());
-
 static_assert(PW_TRANSFER_DEFAULT_TIMEOUT_MS > 0);
 
-namespace pw::transfer {
-namespace cfg {
+// The fractional position within a window at which a receive transfer should
+// extend its window size to minimize the amount of time the transmitter
+// spends blocked.
+//
+// For example, a divisor of 2 will extend the window when half of the
+// requested data has been received, a divisor of three will extend at a third
+// of the window, and so on.
+#ifndef PW_TRANSFER_DEFAULT_EXTEND_WINDOW_DIVISOR
+#define PW_TRANSFER_DEFAULT_EXTEND_WINDOW_DIVISOR 2
+#endif  // PW_TRANSFER_DEFAULT_EXTEND_WINDOW_DIVISOR
+
+static_assert(PW_TRANSFER_DEFAULT_EXTEND_WINDOW_DIVISOR > 1);
+
+namespace pw::transfer::cfg {
 
 inline constexpr uint8_t kDefaultMaxRetries = PW_TRANSFER_DEFAULT_MAX_RETRIES;
 inline constexpr chrono::SystemClock::duration kDefaultChunkTimeout =
     std::chrono::milliseconds(PW_TRANSFER_DEFAULT_TIMEOUT_MS);
+inline constexpr uint32_t kDefaultExtendWindowDivisor =
+    PW_TRANSFER_DEFAULT_EXTEND_WINDOW_DIVISOR;
 
-}  // namespace cfg
-
-namespace internal {
-
-// TODO(pwbug/613): Reconsider this buffer as part of the transfer refactor.
-using EncodingBuffer =
-    std::array<std::byte, PW_TRANSFER_ENCODING_BUFFER_SIZE_BYTES>;
-
-}  // namespace internal
-
-}  // namespace pw::transfer
-
-#undef PW_TRANSFER_DEFAULT_MAX_RETRIES
-#undef PW_TRANSFER_DEFAULT_TIMEOUT_MS
-#undef PW_TRANSFER_ENCODING_BUFFER_SIZE_BYTES
+}  // namespace pw::transfer::cfg

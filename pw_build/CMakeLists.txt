@@ -15,6 +15,9 @@
 # IMPORTANT: The compilation flags in this file must be kept in sync with
 #            the GN flags //pw_build/BUILD.gn.
 
+include("$ENV{PW_ROOT}/pw_build/cc_blob_library.cmake")
+include("$ENV{PW_ROOT}/pw_build/pigweed.cmake")
+
 # Target that specifies the standard Pigweed build options.
 add_library(pw_build INTERFACE)
 target_compile_options(pw_build INTERFACE "-g")
@@ -29,6 +32,9 @@ target_compile_options(pw_build
     $<$<CXX_COMPILER_ID:Clang>:-fcolor-diagnostics>
     $<$<CXX_COMPILER_ID:GNU>:-fdiagnostics-color=always>
 )
+if(ZEPHYR_PIGWEED_MODULE_DIR)
+  target_link_libraries(pw_build INTERFACE zephyr_interface)
+endif()
 
 # Declare top-level targets for tests.
 add_custom_target(pw_tests.default)
@@ -109,3 +115,27 @@ target_compile_options(pw_build.cpp17
 # Create an empty source file and library for general use.
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/empty_file.c" "")
 add_library(pw_build.empty OBJECT "${CMAKE_CURRENT_BINARY_DIR}/empty_file.c" "")
+
+pw_add_test(pw_build.cc_blob_library_test
+  SOURCES
+    cc_blob_library_test.cc
+  DEPS
+    pw_build.test_blob
+  GROUPS
+    modules
+    pw_build
+)
+
+pw_cc_blob_library(pw_build.test_blob
+  HEADER
+    pw_build/test_blob.h
+  NAMESPACE
+    test::ns
+  BLOB
+    SYMBOL_NAME kFirstBlob0123
+    PATH test_blob_0123.bin
+    ALIGNAS 512
+  BLOB
+    SYMBOL_NAME kSecondBlob0123
+    PATH test_blob_0123.bin
+)

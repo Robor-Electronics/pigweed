@@ -16,7 +16,8 @@ Begin each section below by running the console in test mode:
 
 .. code-block:: shell
 
-  pw console --test-mode
+  touch /tmp/empty.yaml
+  env PW_CONSOLE_CONFIG_FILE='/tmp/empty.yaml' pw console --test-mode
 
 Test Sections
 =============
@@ -39,75 +40,85 @@ Log Pane: Basic Actions
      - |checkbox|
 
    * - 2
+     - In the main menu enable :guilabel:`[File] > Log Table View > Hide Date`
+     - The time column shows only the time. E.g. ``09:34:53``.
+     - |checkbox|
+
+   * - 3
+     - In the main menu turn off :guilabel:`[File] > Log Table View > Hide Date`
+     - The time column shows the date and time. E.g. ``20220208 09:34:53``.
+     - |checkbox|
+
+   * - 4
      - Click :guilabel:`Search` on the log toolbar
      - | The search bar appears
        | The cursor should appear after the ``/``
      - |checkbox|
 
-   * - 3
+   * - 5
      - Press :kbd:`Ctrl-c`
      - The search bar disappears
      - |checkbox|
 
-   * - 4
+   * - 6
      - Click :guilabel:`Follow` on the log toolbar
      - Logs stop following
      - |checkbox|
 
-   * - 5
+   * - 7
      - Click :guilabel:`Table` on the log toolbar
      - Table mode is disabled
      - |checkbox|
 
-   * - 6
+   * - 8
      - Click :guilabel:`Wrap` on the log toolbar
      - Line wrapping is enabled
      - |checkbox|
 
-   * - 7
+   * - 9
      - Click :guilabel:`Clear` on the log toolbar
      - | All log lines are erased
        | Follow mode is on
        | New lines start appearing
      - |checkbox|
 
-   * - 8
+   * - 10
      - | Mouse drag across a few log messages
      - | Entire logs are highlighted and a dialog
        | box appears in the upper right
      - |checkbox|
 
-   * - 9
+   * - 11
      - | Without scrolling mouse drag across a set
        | of different log messages.
      - | The old selection disappears leaving only the new selection.
      - |checkbox|
 
-   * - 10
+   * - 12
      - | Click the :guilabel:`Cancel` button
        | in the selection dialog box.
      - | The selection and the dialog box disappears.
      - |checkbox|
 
-   * - 11
+   * - 13
      - | Mouse drag across a few log messages and
        | click the :guilabel:`Save as File` button.
      - | The save as file dialog appears with the
        | :guilabel:`[x] Selected Lines Only` opion checked.
      - |checkbox|
 
-   * - 12
+   * - 14
      - | Press :kbd:`Cancel`
      - | The save dialog closes
      - |checkbox|
 
-   * - 13
+   * - 15
      - | Click the :guilabel:`Save` button on the log toolbar.
        | A dialog appears prompting for a file.
      - | The current working directory should be pre-filled.
      - |checkbox|
 
-   * - 14
+   * - 16
      - | Check :guilabel:`[x] Table Formatting`
        | Uncheck :guilabel:`[ ] Selected Lines Only`
        | Add ``/log.txt`` to the end and press :kbd:`Enter`
@@ -143,54 +154,94 @@ Log Pane: Search and Filtering
      - | Type ``lorem``
        | Press :kbd:`Enter`
      - | Logs stop following
-       | The previous ``Lorem`` word is highlighted in yellow
-       | All other ``Lorem`` words are highlighted in cyan
+       | ``Lorem`` words are highlighted in cyan
+       | The cursor on the first log message
+       | The search toolbar is un-focused and displays:
+       | ``Match 1 / 10`` where the second number (the total match count)
+       | increases once every 10 seconds when new logs arrive.
      - |checkbox|
 
    * - 4
      - Press :kbd:`Ctrl-f`
-     - | The search bar appears
-       | The cursor should appear after the ``/``
+     - | The search bar is focused
+       | The cursor should appear after ``/Lorem``
      - |checkbox|
 
    * - 5
+     - Press :kbd:`Ctrl-c`
+     - | The search bar disappears
+       | ``Lorem`` words are no longer highlighted
+     - |checkbox|
+
+   * - 6
+     - Press :kbd:`/`
+     - | The search bar appears and is empty
+       | The cursor should appear after ``/``
+     - |checkbox|
+
+   * - 7
      - Click :guilabel:`Matcher:` once
      - ``Matcher:STRING`` is shown
      - |checkbox|
 
-   * - 6
+   * - 8
      - | Type ``[=``
        | Press :kbd:`Enter`
-     - All instances of ``[=`` should be highlighted
+     - | All instances of ``[=`` should be highlighted
+       | The cursor should be on log message 2
      - |checkbox|
 
    * - 7
      - Press :kbd:`/`
-     - | The search bar appears
-       | The cursor should appear after the ``/``
+     - | The search bar is focused
+       | The cursor should appear after the ``/[=``
      - |checkbox|
 
    * - 8
+     - Press :kbd:`Ctrl-c`
+     - | The search bar disappears
+       | ``[=`` matches are no longer highlighted
+     - |checkbox|
+
+   * - 9
+     - Press :kbd:`/`
+     - | The search bar appears and is empty
+       | The cursor should appear after ``/``
+     - |checkbox|
+
+   * - 10
      - Press :kbd:`Up`
      - The text ``[=`` should appear in the search input field
      - |checkbox|
 
-   * - 9
+   * - 11
+     - Click :guilabel:`Search Enter`
+     - | All instances of ``[=`` should be highlighted
+       | The cursor should be on log message 12
+     - |checkbox|
+
+   * - 12
      - Click :guilabel:`Add Filter`
      - | A ``Filters`` toolbar will appear
        | showing the new filter: ``<\[= (X)>``.
        | Only log messages matching ``[=`` appear in the logs.
+       | Follow mode is enabled
      - |checkbox|
 
-   * - 10
+   * - 13
      - | Press :kbd:`/`
-       | Type ``# 1``
+     - | The search bar appears and is empty
+       | The cursor should appear after ``/``
+     - |checkbox|
+
+   * - 14
+     - | Type ``# 1`` and press :kbd:`Enter`
        | Click :guilabel:`Add Filter`
      - | The ``Filters`` toolbar shows a new filter: ``<\#\ 1 (X)>``.
        | Only log messages matching both filters will appear in the logs.
      - |checkbox|
 
-   * - 11
+   * - 15
      - | Click the first :guilabel:`(X)`
        | in the filter toolbar.
      - | The ``Filters`` toolbar shows only one filter: ``<\#\ 1 (X)>``.
@@ -198,40 +249,64 @@ Log Pane: Search and Filtering
        | Lines all end in: ``# 1.*``
      - |checkbox|
 
-   * - 12
+   * - 16
      - Click :guilabel:`Clear Filters`
      - | The ``Filters`` toolbar will disappear.
        | All log messages will be shown in the log window.
      - |checkbox|
 
-   * - 13
+   * - 17
      - | Press :kbd:`/`
        | Type ``BAT``
-       | Click :guilabel:`Column`
-     - ``Column:Module`` is shown
+       | Click :guilabel:`Column` until ``Column:Module`` is shown
+       | Press :kbd:`Enter`
+     - | Logs stop following
+       | ``BAT`` is highlighted in cyan
+       | The cursor on the 3rd log message
+       | The search toolbar is un-focused and displays:
+       | ``Match 1 / 10`` where the second number (the total match count)
      - |checkbox|
 
-   * - 14
+   * - 18
+     - Press :kbd:`n`
+     - | ``BAT`` is highlighted in cyan
+       | The cursor on the 7th log message and is in the center of the
+       | log window (not the bottom).
+     - |checkbox|
+
+   * - 19
+     - Click :guilabel:`Jump to new matches`
+     - | :guilabel:`Jump to new matches` is checked and every 5 seconds
+       | the cursor jumps to the latest matching log message.
+     - |checkbox|
+
+   * - 20
+     - Click :guilabel:`Follow`
+     - | :guilabel:`Jump to new matches` is unchecked
+       | The cursor jumps to every new log message once a second.
+     - |checkbox|
+
+   * - 21
      - | Click :guilabel:`Add Filter`
      - | The Filters toolbar appears with one filter: ``<module BAT (X)>``
        | Only logs with Module matching ``BAT`` appear.
      - |checkbox|
 
-   * - 15
+   * - 22
      - Click :guilabel:`Clear Filters`
      - | The ``Filters`` toolbar will disappear.
        | All log messages will be shown in the log window.
      - |checkbox|
 
-   * - 16
+   * - 23
      - | Press :kbd:`/`
        | Type ``BAT``
        | Click :guilabel:`Invert`
      - ``[x] Invert`` setting is shown
      - |checkbox|
 
-   * - 17
-     - | Click :guilabel:`Add Filter`
+   * - 24
+     - | Press :kbd:`Enter` then click :guilabel:`Add Filter`
      - | The Filters toolbar appears
        | One filter is shown: ``<NOT module BAT (X)>``
        | Only logs with Modules other than ``BAT`` appear.
@@ -417,17 +492,48 @@ Mouse Window Resizing
      - |checkbox|
 
    * - 2
-     - | Left click and hold the :guilabel:`====` of that window
+     - | Left click and hold the :guilabel:`-==-` of that window
        | Drag the mouse up and down
      - This log pane is resized
      - |checkbox|
 
    * - 3
-     - | Left click and hold the :guilabel:`====`
+     - | Left click and hold the :guilabel:`-==-`
        | of the :guilabel:`PwConsole Debug` window
        | Drag the mouse up and down
      - | The :guilabel:`PwConsole Debug` should NOT be focused
        | The window should be resized as expected
+     - |checkbox|
+
+   * - 4
+     - Click the :guilabel:`View > Move Window Right`
+     - :guilabel:`Fake Device Logs` should appear in a right side split
+     - |checkbox|
+
+   * - 5
+     - | Left click and hold anywhere on the vertical separator
+       | Drag the mouse left and right
+     - | The window splits should be resized as expected
+     - |checkbox|
+
+   * - 6
+     - Click the :guilabel:`View > Balance Window Sizes`
+     - Window split sizes should reset to equal widths
+     - |checkbox|
+
+   * - 7
+     - | Focus on the :guilabel:`Python Repl` window
+       | Click the :guilabel:`View > Move Window Left`
+     - | :guilabel:`Python Repl` should appear in a left side split
+       | There should be 3 vertical splits in total
+     - |checkbox|
+
+   * - 8
+     - | Left click and hold anywhere on the vertical separator
+       | between the first two splits (Python Repl and the middle split)
+       | Drag the mouse left and right
+     - | The first two window splits should be resized.
+       | The 3rd split size should not change.
      - |checkbox|
 
 Copy Paste
@@ -513,6 +619,15 @@ Copy Paste
      - Python Input is focused
      - |checkbox|
 
+   * - 11
+     - | Type ``print('hello there')`` into the Python input.
+       | Mouse drag select that text
+       | Press :kbd:`Ctrl-c`
+     - | The selection should disappear.
+       | Try pasting into a separate text editor, the paste should
+       | match the text you drag selected.
+     - |checkbox|
+
 Incremental Stdout
 ^^^^^^^^^^^^^^^^^^
 
@@ -592,6 +707,34 @@ Python Input & Output
        | use the mouse wheel to scroll up and down.
      - | The output window should be able to scroll all
        | the way to the beginning and end of the buffer.
+     - |checkbox|
+
+Early Startup
+^^^^^^^^^^^^^
+
+.. list-table::
+   :widths: 5 45 45 5
+   :header-rows: 1
+
+   * - #
+     - Test Action
+     - Expected Result
+     - ✅
+
+   * - 1
+     - | Start the pw console test mode by
+       | running ``pw console --test-mode``
+     - | Console starts up showing an ``All Logs`` window.
+     - |checkbox|
+
+   * - 2
+     - | Click the :guilabel:`All Logs` window title
+       | Press :kbd:`g` to jump to the top of the log history
+     - | These log messages should be at the top:
+       | ``DBG Adding plugins...``
+       | ``DBG Starting prompt_toolkit full-screen application...``
+       | ``DBG pw_console test-mode starting...``
+       | ``DBG pw_console.PwConsoleEmbed init complete``
      - |checkbox|
 
 Quit Confirmation Dialog

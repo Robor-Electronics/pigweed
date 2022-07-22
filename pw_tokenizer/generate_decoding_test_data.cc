@@ -25,8 +25,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <random>
-#include <span>
 
+#include "pw_span/span.h"
 #include "pw_tokenizer/internal/decode.h"
 #include "pw_tokenizer/tokenize.h"
 #include "pw_varint/varint.h"
@@ -168,7 +168,7 @@ class TestDataFile {
 
 // Writes a decoding test case to the file.
 void TestCase(TestDataFile* file,
-              std::span<const uint8_t> buffer,
+              pw::span<const uint8_t> buffer,
               const char* format,
               const char* formatted) {
   file->printf(R"(TestCase("%s", "%s", %s)",
@@ -189,7 +189,7 @@ void TestCase(TestDataFile* file,
               const char (&buffer)[kSize],
               const char* formatted) {
   TestCase(file,
-           std::span(reinterpret_cast<const uint8_t*>(buffer), kSize - 1),
+           pw::span(reinterpret_cast<const uint8_t*>(buffer), kSize - 1),
            format,
            formatted);
 }
@@ -204,7 +204,7 @@ void TestCase(TestDataFile* file,
     std::array<char, 128> formatted = {};                                     \
     std::snprintf(formatted.data(), formatted.size(), format, ##__VA_ARGS__); \
     TestCase(file,                                                            \
-             std::span(buffer).first(size).subspan(4), /* skip the token */   \
+             pw::span(buffer).first(size).subspan(4), /* skip the token */    \
              format,                                                          \
              formatted.data());                                               \
   } while (0)
@@ -217,7 +217,7 @@ void GenerateEncodedStrings(TestDataFile* file) {
   std::mt19937 random(6006411);
   std::uniform_int_distribution<int64_t> big;
   std::uniform_int_distribution<int32_t> medium;
-  std::uniform_int_distribution<char> small(' ', '~');
+  std::uniform_int_distribution<int32_t> small(' ', '~');
   std::uniform_real_distribution<float> real;
 
   file->Section("Simple strings");
@@ -348,7 +348,7 @@ void GenerateEncodedStrings(TestDataFile* file) {
   for (int i = 0; i < 100; ++i) {
     unsigned long long n1 = big(random);
     int n2 = medium(random);
-    char ch = small(random);
+    char ch = static_cast<char>(small(random));
     if (ch == '"' || ch == '\\') {
       ch = '\t';
     }
@@ -359,7 +359,7 @@ void GenerateEncodedStrings(TestDataFile* file) {
   for (int i = 0; i < 100; ++i) {
     const long long n1 = big(random);
     const unsigned n2 = medium(random);
-    const char ch = small(random);
+    const char ch = static_cast<char>(small(random));
 
     MAKE_TEST_CASE(
         "%s: %lld 0x%16u%08X %d", std::to_string(i).c_str(), n1, n2, n2, ch);
@@ -382,8 +382,7 @@ void OutputVarintTest(TestDataFile* file, T i) {
 
   std::array<uint8_t, 10> buffer;
   // All integers are encoded as signed for tokenization.
-  size_t size =
-      pw::varint::Encode(i, std::as_writable_bytes(std::span(buffer)));
+  size_t size = pw::varint::Encode(i, pw::as_writable_bytes(pw::span(buffer)));
 
   for (size_t i = 0; i < size; ++i) {
     file->printf("\\x%02x", buffer[i]);

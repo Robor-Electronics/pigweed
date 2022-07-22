@@ -21,8 +21,19 @@
 #include "pw_containers/vector.h"
 #include "pw_containers/wrapped_iterator.h"
 #include "pw_rpc/internal/fake_channel_output.h"
+#include "pw_rpc/internal/lock.h"
 #include "pw_rpc/nanopb/internal/common.h"
 #include "pw_rpc/nanopb/internal/method.h"
+
+namespace pw::rpc {
+namespace internal {
+
+// Forward declare for a friend statement.
+template <typename, size_t, size_t, size_t>
+class ForwardingChannelOutput;
+
+}  // namespace internal
+}  // namespace pw::rpc
 
 namespace pw::rpc {
 namespace internal::test::nanopb {
@@ -104,9 +115,16 @@ class NanopbFakeChannelOutput final
   NanopbFakeChannelOutput() = default;
 
   // Iterates over request payloads from request or client stream packets.
+  //
+  // !!! WARNING !!!
+  //
+  // Access to the FakeChannelOutput through the NanopbPayloadsView is NOT
+  // synchronized! The NanopbPayloadsView is immediately invalidated if any
+  // thread accesses the FakeChannelOutput.
   template <auto kMethod>
   NanopbPayloadsView<Request<kMethod>> requests(
-      uint32_t channel_id = Channel::kUnassignedChannelId) const {
+      uint32_t channel_id = Channel::kUnassignedChannelId) const
+      PW_NO_LOCK_SAFETY_ANALYSIS {
     constexpr internal::PacketType packet_type =
         HasClientStream(internal::MethodInfo<kMethod>::kType)
             ? internal::PacketType::CLIENT_STREAM
@@ -122,9 +140,16 @@ class NanopbFakeChannelOutput final
   }
 
   // Iterates over response payloads from response or server stream packets.
+  //
+  // !!! WARNING !!!
+  //
+  // Access to the FakeChannelOutput through the NanopbPayloadsView is NOT
+  // synchronized! The NanopbPayloadsView is immediately invalidated if any
+  // thread accesses the FakeChannelOutput.
   template <auto kMethod>
   NanopbPayloadsView<Response<kMethod>> responses(
-      uint32_t channel_id = Channel::kUnassignedChannelId) const {
+      uint32_t channel_id = Channel::kUnassignedChannelId) const
+      PW_NO_LOCK_SAFETY_ANALYSIS {
     constexpr internal::PacketType packet_type =
         HasServerStream(internal::MethodInfo<kMethod>::kType)
             ? internal::PacketType::SERVER_STREAM
@@ -141,6 +166,7 @@ class NanopbFakeChannelOutput final
 
   template <auto kMethod>
   Response<kMethod> last_response() const {
+    internal::LockGuard lock(internal::test::FakeChannelOutput::mutex());
     NanopbPayloadsView<Response<kMethod>> payloads = responses<kMethod>();
     PW_ASSERT(!payloads.empty());
     return payloads.back();
@@ -149,6 +175,8 @@ class NanopbFakeChannelOutput final
  private:
   template <typename, auto, uint32_t, size_t, size_t>
   friend class internal::test::nanopb::NanopbInvocationContext;
+  template <typename, size_t, size_t, size_t>
+  friend class internal::ForwardingChannelOutput;
 
   using Base =
       internal::test::FakeChannelOutputBuffer<kMaxPackets,
@@ -156,12 +184,18 @@ class NanopbFakeChannelOutput final
 
   using internal::test::FakeChannelOutput::last_packet;
 
+  // !!! WARNING !!!
+  //
+  // Access to the FakeChannelOutput through the NanopbPayloadsView is NOT
+  // synchronized! The NanopbPayloadsView is immediately invalidated if any
+  // thread accesses the FakeChannelOutput.
   template <typename T>
   NanopbPayloadsView<T> payload_structs(const internal::NanopbSerde& serde,
                                         MethodType type,
                                         uint32_t channel_id,
                                         uint32_t service_id,
-                                        uint32_t method_id) const {
+                                        uint32_t method_id) const
+      PW_NO_LOCK_SAFETY_ANALYSIS {
     return NanopbPayloadsView<T>(
         serde, Base::packets(), type, channel_id, service_id, method_id);
   }

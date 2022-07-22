@@ -16,8 +16,8 @@
 #include <netinet/in.h>
 
 #include <cstdint>
-#include <span>
 
+#include "pw_span/span.h"
 #include "pw_stream/stream.h"
 
 namespace pw::stream {
@@ -26,7 +26,7 @@ class SocketStream : public NonSeekableReaderWriter {
  public:
   constexpr SocketStream() = default;
 
-  ~SocketStream() { Close(); }
+  ~SocketStream() override { Close(); }
 
   // Listen to the port and return after a client is connected
   Status Serve(uint16_t port);
@@ -38,16 +38,23 @@ class SocketStream : public NonSeekableReaderWriter {
   // Close the socket stream and release all resources
   void Close();
 
+  // Exposes the file descriptor for the active connection. This is exposed to
+  // allow configuration and introspection of this socket's current
+  // configuration using setsockopt() and getsockopt().
+  //
+  // Returns -1 if there is no active connection.
+  int connection_fd() { return connection_fd_; }
+
  private:
   static constexpr int kInvalidFd = -1;
 
-  Status DoWrite(std::span<const std::byte> data) override;
+  Status DoWrite(span<const std::byte> data) override;
 
   StatusWithSize DoRead(ByteSpan dest) override;
 
   uint16_t listen_port_ = 0;
   int socket_fd_ = kInvalidFd;
-  int conn_fd_ = kInvalidFd;
+  int connection_fd_ = kInvalidFd;
   struct sockaddr_in sockaddr_client_ = {};
 };
 

@@ -55,6 +55,7 @@ pw_source_set("support") {
     "$dir_pw_cpu_exception:support.facade",
     "$dir_pw_preprocessor:arch",
     dir_pw_log,
+    dir_pw_span,
     dir_pw_string,
   ]
   sources = [ "support.cc" ]
@@ -145,6 +146,7 @@ pw_source_set("cpu_exception.impl") {
     ":config",
     ":cortex_m_constants",
     ":cpu_state",
+    ":util",
     "$dir_pw_cpu_exception:entry.facade",
     "$dir_pw_cpu_exception:handler",
     "$dir_pw_preprocessor:arch",
@@ -175,6 +177,7 @@ pw_source_set("snapshot") {
     ":config",
     ":cortex_m_constants",
     ":proto_dump",
+    ":util",
     dir_pw_log,
   ]
 }
@@ -207,7 +210,7 @@ pw_test_group("tests") {
   tests = [ ":cpu_exception_entry_test" ]
 }
 
-# TODO(pwbug/583): Add ARMv8-M mainline coverage.
+# TODO(b/234888156): Add ARMv8-M mainline coverage.
 pw_test("cpu_exception_entry_test") {
   enable_if = pw_cpu_exception_ENTRY_BACKEND ==
               "$dir_pw_cpu_exception_cortex_m:cpu_exception"
@@ -218,8 +221,19 @@ pw_test("cpu_exception_entry_test") {
     "$dir_pw_cpu_exception:entry",
     "$dir_pw_cpu_exception:handler",
     "$dir_pw_cpu_exception:support",
+    dir_pw_span,
   ]
   sources = [ "exception_entry_test.cc" ]
+}
+
+pw_test("util_test") {
+  enable_if = pw_cpu_exception_ENTRY_BACKEND ==
+              "$dir_pw_cpu_exception_cortex_m:cpu_exception"
+  deps = [
+    ":cpu_state",
+    ":util",
+  ]
+  sources = [ "util_test.cc" ]
 }
 
 pw_doc_group("docs") {

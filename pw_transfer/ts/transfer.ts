@@ -1,4 +1,4 @@
-// Copyright 2021 The Pigweed Authors
+// Copyright 2022 The Pigweed Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not
 // use this file except in compliance with the License. You may obtain a copy of
@@ -18,7 +18,7 @@ import {
   ServiceClient,
 } from '@pigweed/pw_rpc';
 import {Status} from '@pigweed/pw_status';
-import {Chunk} from 'transfer_proto_tspb/transfer_proto_tspb_pb/pw_transfer/transfer_pb';
+import {Chunk} from 'pigweed/protos/pw_transfer/transfer_pb';
 
 export class ProgressStats {
   constructor(
@@ -138,6 +138,7 @@ export abstract class Transfer {
     const chunk = new Chunk();
     chunk.setStatus(error);
     chunk.setTransferId(this.id);
+    chunk.setType(Chunk.Type.COMPLETION);
     this.sendChunk(chunk);
     this.finish(error);
   }
@@ -252,17 +253,13 @@ export class ReadTransfer extends Transfer {
   }
 
   protected get initialChunk(): Chunk {
-    return this.transferParameters();
+    return this.transferParameters(Chunk.Type.START);
   }
 
   /** Builds an updated transfer parameters chunk to send the server. */
-  private transferParameters(extend = false): Chunk {
+  private transferParameters(type: Chunk.TypeMap[keyof Chunk.TypeMap]): Chunk {
     this.pendingBytes = this.maxBytesToReceive;
     this.windowEndOffset = this.offset + this.maxBytesToReceive;
-
-    const chunkType = extend
-      ? Chunk.Type.PARAMETERS_CONTINUE
-      : Chunk.Type.PARAMETERS_RETRANSMIT;
 
     const chunk = new Chunk();
     chunk.setTransferId(this.id);
@@ -270,7 +267,7 @@ export class ReadTransfer extends Transfer {
     chunk.setMaxChunkSizeBytes(this.maxChunkSize);
     chunk.setOffset(this.offset);
     chunk.setWindowEndOffset(this.windowEndOffset);
-    chunk.setType(chunkType);
+    chunk.setType(type);
 
     if (this.chunkDelayMicroS !== 0) {
       chunk.setMinDelayMicroseconds(this.chunkDelayMicroS!);
@@ -289,7 +286,7 @@ export class ReadTransfer extends Transfer {
       // Initially, the transfer service only supports in-order transfers.
       // If data is received out of order, request that the server
       // retransmit from the previous offset.
-      this.sendChunk(this.transferParameters());
+      this.sendChunk(this.transferParameters(Chunk.Type.PARAMETERS_RETRANSMIT));
       return;
     }
 
@@ -304,10 +301,11 @@ export class ReadTransfer extends Transfer {
 
     if (chunk.hasRemainingBytes()) {
       if (chunk.getRemainingBytes() === 0) {
-        // No more data to read. Aknowledge receipt and finish.
+        // No more data to read. Acknowledge receipt and finish.
         const endChunk = new Chunk();
         endChunk.setTransferId(this.id);
         endChunk.setStatus(Status.OK);
+        endChunk.setType(Chunk.Type.COMPLETION);
         this.sendChunk(endChunk);
         this.finish(Status.OK);
         return;
@@ -321,6 +319,35 @@ export class ReadTransfer extends Transfer {
       if (this.remainingTransferSize <= 0) {
         this.remainingTransferSize = undefined;
       }
+    }
+
+    if (chunk.getWindowEndOffset() !== 0) {
+      if (chunk.getWindowEndOffset() < this.offset) {
+        console.error(
+          `Transfer ${
+            this.id
+          }: transmitter sent invalid earlier end offset ${chunk.getWindowEndOffset()} (receiver offset ${
+            this.offset
+          })`
+        );
+        this.sendError(Status.INTERNAL);
+        return;
+      }
+
+      if (chunk.getWindowEndOffset() < this.offset) {
+        console.error(
+          `Transfer ${
+            this.id
+          }: transmitter sent invalid later end offset ${chunk.getWindowEndOffset()} (receiver end offset ${
+            this.windowEndOffset
+          })`
+        );
+        this.sendError(Status.INTERNAL);
+        return;
+      }
+
+      this.windowEndOffset = chunk.getWindowEndOffset();
+      this.pendingBytes -= chunk.getWindowEndOffset() - this.offset;
     }
 
     const remainingWindowSize = this.windowEndOffset - this.offset;
@@ -337,14 +364,14 @@ export class ReadTransfer extends Transfer {
     if (this.pendingBytes === 0) {
       // All pending data was received. Send out a new parameters chunk
       // for the next block.
-      this.sendChunk(this.transferParameters());
+      this.sendChunk(this.transferParameters(Chunk.Type.PARAMETERS_RETRANSMIT));
     } else if (extendWindow) {
-      this.sendChunk(this.transferParameters(/*extend=*/ true));
+      this.sendChunk(this.transferParameters(Chunk.Type.PARAMETERS_CONTINUE));
     }
   }
 
   protected retryAfterTimeout(): void {
-    this.sendChunk(this.transferParameters());
+    this.sendChunk(this.transferParameters(Chunk.Type.PARAMETERS_RETRANSMIT));
   }
 }
 
@@ -375,8 +402,12 @@ export class WriteTransfer extends Transfer {
   }
 
   protected get initialChunk(): Chunk {
+    // TODO(frolv): The session ID should not be set here but assigned by the
+    // server during an initial handshake.
     const chunk = new Chunk();
     chunk.setTransferId(this.id);
+    chunk.setResourceId(this.id);
+    chunk.setType(Chunk.Type.START);
     return chunk;
   }
 
@@ -487,6 +518,8 @@ export class WriteTransfer extends Transfer {
     const chunk = new Chunk();
     chunk.setTransferId(this.id);
     chunk.setOffset(this.offset);
+    chunk.setType(Chunk.Type.DATA);
+
     const maxBytesInChunk = Math.min(
       this.maxChunkSize,
       this.windowEndOffset - this.offset

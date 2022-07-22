@@ -133,19 +133,31 @@ class RawCodeGenerator(CodeGenerator):
 
         self.line('}')
 
+    def method_info_specialization(self, method: ProtoServiceMethod) -> None:
+        self.line()
+        # We have Request/Response as voids to mark raw as a special case.
+        # Raw operates in ConstByteSpans, which won't be copied by copying the
+        # span itself and without special treatment will lead to dangling
+        # pointers.
+        #
+        # Helpers/traits that want to use Request/Response and should support
+        # raw are required to do a special implementation for them instead that
+        # will copy the actual data.
+        self.line('using Request = void;')
+        self.line('using Response = void;')
+
 
 class StubGenerator(codegen.StubGenerator):
     def unary_signature(self, method: ProtoServiceMethod, prefix: str) -> str:
-        return (f'pw::StatusWithSize {prefix}{method.name()}('
-                'pw::ConstByteSpan request, pw::ByteSpan response)')
+        return (f'void {prefix}{method.name()}(pw::ConstByteSpan request, '
+                'pw::rpc::RawUnaryResponder& responder)')
 
     def unary_stub(self, method: ProtoServiceMethod,
                    output: OutputFile) -> None:
         output.write_line(codegen.STUB_REQUEST_TODO)
         output.write_line('static_cast<void>(request);')
         output.write_line(codegen.STUB_RESPONSE_TODO)
-        output.write_line('static_cast<void>(response);')
-        output.write_line('return pw::StatusWithSize::Unimplemented();')
+        output.write_line('static_cast<void>(responder);')
 
     def server_streaming_signature(self, method: ProtoServiceMethod,
                                    prefix: str) -> str:
