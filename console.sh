@@ -4,7 +4,9 @@
 
 export PROJECT_DIR=~/Projects/vanremmen/uv-controller
 # get usb
-until usb=`ls /dev/tty.usb*`; do
+# - /dev/tty.usbmodem2301  -> usb from the HMI
+# - /dev/tty.usbserial-240 -> modbus usb convertor
+until usb=`ls /dev/tty.usbmodem*`; do
   echo "no usb, retry..."
   sleep  0.1
 done
